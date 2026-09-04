@@ -1,6 +1,8 @@
 # 這個 repo 怎麼寫
 
-8086 版 p-machine 直譯器（`SYSTEM.PME.86`）的知識庫，以及照著它用 Go 重做一台機器。
+**Parhelion PME**：8086 版 p-machine 直譯器（`SYSTEM.PME.86`）的知識庫，
+以及照著它用 Go 重做一台機器。名字的由來寫在 `README.md`，
+文件裡提到專案本身時用「Parhelion」，首次出現標中文「幻日」。
 目標讀者是「要重做一台 p-machine，需要知道原版到底怎麼做」的人。
 
 繼承 `~/.claude/rules/`（身分、文風、執行邊界）與 `~/.claude/rules/00-rules-index.md` 的
@@ -9,6 +11,18 @@
 姊妹 repo：[`ucsd-pascal-notes`](https://github.com/wicanr2/ucsd-pascal-notes)
 放 p-machine 的通則、指令編碼的第一性原理推導、IV.0 手冊摘譯與掃描檔。
 **通則寫那邊，這一份實作的細節寫這邊。** 兩邊都要寫時，這邊引用那邊，不複製。
+
+## 名字怎麼用
+
+| 位置 | 用什麼 |
+|---|---|
+| repo | `Parhelion-PME86` |
+| Go module | `github.com/wicanr2/Parhelion-PME86` |
+| 執行檔 | `parhelion` |
+| 文件標題與行文 | `Parhelion PME`；中文行文用「幻日」，首次出現標原文 |
+
+Go 的 module path 帶大寫是合法的，module cache 會把大寫轉成 `!` 前綴的逃脫形式。
+不要為了這件事把 repo 改成小寫——repo 名已經定案。
 
 ## 兩層結構
 

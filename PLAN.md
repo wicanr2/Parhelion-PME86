@@ -2,7 +2,7 @@
 
 ## 分輪紀錄
 
-### R1（2026-09-05）建立 repo，第一批四篇
+### R1（2026-09-05）建立 repo，第一批九篇
 
 - 用擴充後的 `tools/dump-routines-86.py` 重跑 IDA：**169 支 dispatch 目標全部反組譯成功，
   另外追出 25 支助手常式**（追 `call` 目標）。輸入 sha256 `fe427aa66ca8…`，
@@ -34,8 +34,11 @@
 
 ## 勘誤：被這一輪推翻的舊斷言
 
-都在姊妹 repo `ucsd-pascal-notes` 的 `docs/30-opcode-tables/iv21-two-cpus.md`
-與 `docs/50-iv-internals/instruction-set-details.md`，**尚未回去修**。
+都在姊妹 repo [`ucsd-pascal-notes`](https://github.com/wicanr2/ucsd-pascal-notes)
+的 `docs/30-opcode-tables/iv21-two-cpus.md` 與
+`docs/50-iv-internals/instruction-set-details.md`，**同一輪已經回去改掉**
+（commit `7891ccd`），並對該 repo 全部文件的「十進位（0x十六）」做過一次
+一致性掃描，其餘 0 個不一致。
 
 | 舊斷言 | 實際 | 證據 |
 |---|---|---|
