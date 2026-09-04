@@ -20,7 +20,10 @@
 | **SIB** | Segment Information Block。放段在記憶體的位址、參考計數、活動度。 |
 | **Codepool** | 段被換入時放的記憶體區。本 repo 的 remake 不打算做。 |
 | **常數池** | 段內存放常數的區域，`LCO`／`LDC`／`XJP` 從這裡取值。 |
-| **程序字典** | 段內把程序號對到程序碼位址的表，**往回長**。 |
+| **程序字典**（routine dictionary） | 段內把程序號對到程序碼位址的表，**往回長**：常式 n 的指標在 word `字典基底 − n`。 |
+| **`DATASIZE`** | 一支常式要配置的區域資料 word 數，不含參數。字典項指的就是這個 word；為負表示第一條指令是原生碼。 |
+| **`EXITIC`** | 離開一支常式時要執行的碼，段內位元組偏移。在 `DATASIZE` **前面**一個 word。 |
+| **`Seg_Dict`** | codefile 開頭的 segment dictionary 記錄，一筆描述最多 16 個 segment，以 `Next_Dict` 串成鏈。 |
 | **byte sex** | 段的位元組序是否與主機相同。`MOV`、`LDC`、`XJP` 會依它決定要不要交換位元組。 |
 | **packed field** | `packed` 型別的位元欄位。位址是堆疊上三個 word：位址、位元數、最右 bit 編號。 |
 | **CSP** | 在 IV.0 是 `Copy String Parameter`（opcode 172）。**不要**當成「呼叫標準程序」的縮寫。 |
@@ -42,6 +45,7 @@
 | **Parhelion**（幻日） | 這個專案的名字。真太陽旁邊二十二度的第二顆太陽，只在真太陽也在時出現——與 oracle 的關係同構。 |
 | **oracle** | 原版直譯器在 DOSBox 裡跑出來的行為，用來與 Go 版對拍。 |
 | **spec 狀態** | `DRAFT`（未配證據）、`READY`（可實作）、`CONFORMED`（已同狀態驗證）。 |
+| **M0–M3** | 四個里程碑：codefile 讀取器、純計算子集、多段呼叫與部分 CSP、跑得動 `SYSTEM.PASCAL`。 |
 | **remake 自訂** | 原版沒有對應物的決定。要與「刻意不照做」分開標。 |
 | **刻意不照做** | 原版有這個行為，remake 決定不要（例如段換出）。 |
 

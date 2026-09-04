@@ -6,3 +6,6 @@
 *.VOL
 PME86.BIN
 SYSTEM.*
+
+# Go
+/parhelion

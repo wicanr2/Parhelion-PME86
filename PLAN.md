@@ -32,6 +32,29 @@
 | 遮罩表 `0x1fb6` 起 17 格，第 n 項 `(1 << n) − 1` | `LDP`／`STP` 的索引算法加表本身的內容 |
 | big operand 解碼段（9 個位元組）在檔案裡出現 **19 次**，字面完全相同 | 位元組序列搜尋 |
 
+### R2（2026-09-05）定名，M0 完成
+
+- 專案定名 **Parhelion PME**，repo `Parhelion-PME86`，名字的由來寫在 `README.md`。
+- 寫 [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md)（狀態 `READY`），
+  逐條配證據，並拿 `SYSTEM.PASCAL` 的實際位元組驗過。
+- 實作 `internal/codefile` 與 `cmd/parhelion codefile`，**M0 通過**：
+  28 個 segment、465 支常式、0 個字典項越界，兩筆 dictionary 記錄的鏈接得起來。
+- 單元測試用合成的 codefile，不含原版資料；真檔驗收走 `PARHELION_CODEFILE` 環境變數。
+
+這一輪解出來的東西：
+
+| 結論 | 證據 |
+|---|---|
+| segment dictionary 記錄的 512 位元組版面（六個平行陣列＋`Next_Dict`＋`Copy_Note`＋`Sex`） | 最尾端的 `Copy_Note` 與 `Sex` 都讀得對，表示中間所有欄位大小加總正確 |
+| `Seg_Info` 的 packed record 由低位往高位打包 | `KERNEL` 讀出 `0x8001` → 段號 1、`M_Psuedo`、版本 `IV`；反方向段號會是 128 |
+| `Seg_Famly` 的變體記錄在 `Proc_Seg` 時是外層 unit 名 | `SEGFOPEN` 讀出 `"FILEOPS "`、`USERPROG` 讀出 `"KERNEL  "`，都對得到同檔案裡的段 |
+| **`SYSTEM.PASCAL` 自己就混著兩種位元組序**：28 段裡 6 段的 byte sex 指示字讀出 256 | 直接讀檔案 |
+| 常式版面是 `EXITIC`、`DATASIZE`、第一條指令，**字典項指的是中間的 `DATASIZE`** | 直譯器 `0x103a` 的 `mov cx, es:[di]` 後 `inc di; inc di`；430 支常式裡 418 支的 `EXITIC` 直接指到 `RPU`，0 支越界 |
+| 段內所有段的 `REALSIZE` 都是 4 | 與 `LDCRL` 在堆疊上開 8 個位元組一致 |
+
+spec 01 停在 `READY` 沒有升 `CONFORMED`。升級條件是開放項目 #8——
+把原版放進 DOSBox 當 oracle 之前，「同狀態驗證」這個門檻沒有真的跨過。
+
 ## 勘誤：被這一輪推翻的舊斷言
 
 都在姊妹 repo [`ucsd-pascal-notes`](https://github.com/wicanr2/ucsd-pascal-notes)
@@ -62,9 +85,13 @@
 | 6 | `MPR`（`0x24e1`）與 `DVR`（`0x262a`）被 80 條上限截斷 | 提高上限重跑，或改成追控制流而不是線性反組譯 |
 | 7 | `ss:3Ch` 指向的記錄版面（堆疊檢查只用了 `+4`） | 找出誰設定 `ss:3Ch` |
 | 8 | DOSBox 裡的 psys21 能不能自動送輸入、取輸出 | 跑起來、送一行指令、把畫面抓出來比對 |
+| 9 | 段頭第 9、10 個 word（手冊說「保留」）在樣本裡不是零，隨 segment 變化 | 找到寫它的東西（編譯器或 Linker），或在多份不同來源的 codefile 上看出規律 |
+| 10 | 430 支常式裡有 12 支的 `EXITIC` 不是直接指到 `RPU` | 逐支反組譯那 12 個離開序列 |
 
 ## 下一輪候選
 
-- **#8 先做。** 沒有 oracle，後面的實作只能靠讀碼的信心。
-- #4 與 #6 是純反組譯工作，可以並行。
-- M0（codefile 讀取器）不依賴任何開放項目，可以立刻開始。
+- **#8 先做。** 沒有 oracle，M1 的「兩邊輸出相同」沒有辦法驗，
+  spec 01 也升不到 `CONFORMED`。
+- 接著是 spec 02：常數池的內部結構（real pool 與 main pool 的夾層版面），
+  M0 已經把常數池的位置解出來，只差內容。
+- #4（33 支內嵌程序）與 #6（`MPR`／`DVR` 被截斷）是純反組譯工作，可以並行。

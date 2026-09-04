@@ -47,8 +47,29 @@
 
 - [可行性評估](docs/30-remake/feasibility.md) — 六層盤點、oracle 迴路、四個里程碑。
 - [spec 閘門](docs/30-remake/spec-workflow.md) — `DRAFT` → `READY` → `CONFORMED`。
+- [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — 狀態 `READY`。
 
-實作還沒有開始。開始之前要先有 `READY` 的 spec。
+**M0（codefile 讀取器）已經做完。** 直譯器本身還沒開始。
+
+```
+$ go run ./cmd/parhelion codefile -r SYSTEM.PASCAL
+69632 位元組（136 blocks），28 個 segment
+Copyright 1979 U.C. Regents; Copyright 1985 SofTech Microsystems
+
+段名        blk  words  段號  種類        機器        版本  sex  常數池   R  常式  無碼  外層
+KERNEL    16   2150   1   Unit_Seg  M_Psuedo  IV  同    1918  4  66  26
+GOTOXY    25   63     2   Unit_Seg  M_Psuedo  IV  同    58    4  2   0
+...
+合計 465 支常式，其中 35 支沒有碼；6 個 segment 的 byte sex 與主機相反
+```
+
+最後那一行是這一輪最值得記的發現：**作業系統自己的 codefile 裡就混著兩種位元組序。**
+
+單元測試用的是合成的 codefile，不含任何原版資料。要拿真檔驗收：
+
+```
+PARHELION_CODEFILE=/path/to/SYSTEM.PASCAL go test ./internal/codefile/
+```
 
 ## 工具
 
