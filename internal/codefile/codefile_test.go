@@ -38,7 +38,7 @@ func (b *builder) dictRecord(block int, segs []segSpec, next int, note string) {
 	for i, s := range segs {
 		b.put(base+offDiskInfo+i*4, uint16(s.block), false)
 		b.put(base+offDiskInfo+i*4+2, uint16(s.words), false)
-		copy(b.data[base+offSegName+i*8:], []byte(s.name+"        ")[:8])
+		copy(b.data[base+offSegName+i*8:], []byte(s.name + "        ")[:8])
 		b.put(base+offSegMisc+i*2, uint16(UnitSeg), false)
 		// Seg_Num = i+1、M_Psuedo、版本 IV
 		b.put(base+offSegInfo+i*2, uint16(i+1)|uint16(4)<<13, false)
@@ -57,7 +57,7 @@ func (b *builder) segment(s segSpec) {
 	dict := s.words - 1
 	w(hdrRoutineDict/2, uint16(dict))
 	w(hdrRelocList/2, 0)
-	copy(b.data[base+hdrName:], []byte(s.name+"        ")[:8])
+	copy(b.data[base+hdrName:], []byte(s.name + "        ")[:8])
 	w(hdrByteSex/2, 1)
 	w(hdrConstPool/2, 0)
 	w(hdrRealSize/2, uint16(s.realSize))

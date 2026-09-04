@@ -129,12 +129,12 @@ type Segment struct {
 	Block int // 起始 block
 	Words int // Code_Leng，含 relocation list、不含 segment reference list
 
-	Flipped   bool   // byte sex 與主機相反
-	HeaderName string // 段頭裡的段名，正常情況與 Name 相同
-	RealSize  int    // $R2 或 $R4
-	ConstPool int    // 常數池的段內 word 偏移；0 表示沒有
-	RelocList int    // relocation list 的段內 word 偏移
-	Reserved  [2]uint16 // 段頭保留的兩個 word；實測非零，用途未知
+	Flipped    bool      // byte sex 與主機相反
+	HeaderName string    // 段頭裡的段名，正常情況與 Name 相同
+	RealSize   int       // $R2 或 $R4
+	ConstPool  int       // 常數池的段內 word 偏移；0 表示沒有
+	RelocList  int       // relocation list 的段內 word 偏移
+	Reserved   [2]uint16 // 段頭保留的兩個 word；實測非零，用途未知
 
 	Routines []Routine
 
