@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470"
+     font-family="'Noto Sans CJK TC','PingFang TC','Microsoft JhengHei',sans-serif">
+  <rect width="960" height="470" fill="#ffffff"/>
+  <defs>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#d97b29"/>
+    </marker>
+  </defs>
+
+  <text x="30" y="34" font-size="17" fill="#222">活動記錄：為什麼兩個基底暫存器都要加 8</text>
+
+  <!-- 記憶體格 -->
+  <g font-size="13">
+    <rect x="250" y="62" width="240" height="34" rx="4" fill="#fdf3e8" stroke="#d97b29" stroke-width="1.4"/>
+    <text x="370" y="84" text-anchor="middle" fill="#8a4a10">MSSTAT　靜態鏈</text>
+    <text x="232" y="84" text-anchor="end" fill="#666" font-family="monospace">MP+0</text>
+
+    <rect x="250" y="96" width="240" height="34" rx="4" fill="#fdf3e8" stroke="#d97b29" stroke-width="1.4"/>
+    <text x="370" y="118" text-anchor="middle" fill="#8a4a10">MSDYN　動態鏈</text>
+    <text x="232" y="118" text-anchor="end" fill="#666" font-family="monospace">MP+2</text>
+
+    <rect x="250" y="130" width="240" height="34" rx="4" fill="#fdf3e8" stroke="#d97b29" stroke-width="1.4"/>
+    <text x="370" y="152" text-anchor="middle" fill="#8a4a10">MSIPC　返回位址</text>
+    <text x="232" y="152" text-anchor="end" fill="#666" font-family="monospace">MP+4</text>
+
+    <rect x="250" y="164" width="240" height="34" rx="4" fill="#fdf3e8" stroke="#d97b29" stroke-width="1.4"/>
+    <text x="370" y="186" text-anchor="middle" fill="#8a4a10">MSENV　呼叫者的 E_Rec</text>
+    <text x="232" y="186" text-anchor="end" fill="#666" font-family="monospace">MP+6</text>
+
+    <rect x="250" y="198" width="240" height="34" rx="4" fill="#fdf3e8" stroke="#d97b29" stroke-width="1.4"/>
+    <text x="370" y="220" text-anchor="middle" fill="#8a4a10">MSPROC　程序號</text>
+    <text x="232" y="220" text-anchor="end" fill="#666" font-family="monospace">MP+8</text>
+
+    <rect x="250" y="232" width="240" height="34" rx="4" fill="#fafafa" stroke="#bbb"/>
+    <text x="370" y="254" text-anchor="middle" fill="#333">區域變數 1</text>
+    <text x="232" y="254" text-anchor="end" fill="#666" font-family="monospace">MP+10</text>
+
+    <rect x="250" y="266" width="240" height="34" rx="4" fill="#fafafa" stroke="#bbb"/>
+    <text x="370" y="288" text-anchor="middle" fill="#333">區域變數 2</text>
+    <text x="232" y="288" text-anchor="end" fill="#666" font-family="monospace">MP+12</text>
+
+    <rect x="250" y="300" width="240" height="34" rx="4" fill="#fafafa" stroke="#bbb"/>
+    <text x="370" y="322" text-anchor="middle" fill="#999">…</text>
+  </g>
+
+  <text x="250" y="52" font-size="13" fill="#8a4a10">Mark Stack Control Word（5 個 word）</text>
+
+  <!-- 右側說明 -->
+  <path d="M600 220 L500 220" stroke="#d97b29" fill="none" marker-end="url(#b)" stroke-width="1.4"/>
+  <text x="608" y="216" font-size="14" fill="#8a4a10" font-family="monospace">bx = MP + 8</text>
+  <text x="608" y="238" font-size="13" fill="#444">局部資料基底，常駐在暫存器</text>
+
+  <path d="M600 254 L500 254" stroke="#888" fill="none" stroke-dasharray="4 3"/>
+  <text x="608" y="272" font-size="13" fill="#444">變數編號 n 在</text>
+  <text x="608" y="294" font-size="14" fill="#333" font-family="monospace">bx + 2n</text>
+  <text x="608" y="318" font-size="13" fill="#444">n = 1 落在 MP+10，</text>
+  <text x="608" y="338" font-size="13" fill="#444">正好是 MSCW 之後第一個 word。</text>
+
+  <line x1="40" y1="372" x2="920" y2="372" stroke="#e0e0e0"/>
+  <text x="40" y="400" font-size="14" fill="#222">全域這一側是同一個版面</text>
+  <text x="40" y="424" font-size="13" fill="#444" font-family="monospace">dx = Env_Data + 8</text>
+  <text x="330" y="424" font-size="13" fill="#444">全域框開頭也是一個 MSCW，所以基底同樣跳過 8 個位元組。</text>
+  <text x="40" y="450" font-size="13" fill="#8a4a10">p-code 的變數編號從 1 起算，不是慣例，是這個版面算出來的結果。</text>
+</svg>

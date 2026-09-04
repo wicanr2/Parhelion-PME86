@@ -1,0 +1,8 @@
+# 驗證用的 PNG 走 scratchpad，不入版控
+*.png
+
+# 原版素材與 IDA 資料庫不入版控
+*.i64
+*.VOL
+PME86.BIN
+SYSTEM.*

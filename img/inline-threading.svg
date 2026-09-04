@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420"
+     font-family="'Noto Sans CJK TC','PingFang TC','Microsoft JhengHei',sans-serif">
+  <rect width="960" height="420" fill="#ffffff"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5a5a5a"/>
+    </marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#d97b29"/>
+    </marker>
+  </defs>
+
+  <text x="30" y="34" font-size="17" fill="#222">68000 版（SunDog）：一個共同主迴圈</text>
+  <text x="510" y="34" font-size="17" fill="#222">8086 版（PME.86）：分派碼複製到每支結尾</text>
+  <line x1="480" y1="14" x2="480" y2="406" stroke="#e0e0e0" stroke-width="1"/>
+
+  <!-- 左：中央迴圈 -->
+  <rect x="40" y="70" width="180" height="66" rx="8" fill="#fdf3e8" stroke="#d97b29" stroke-width="1.5"/>
+  <text x="130" y="94" font-size="14" fill="#8a4a10" text-anchor="middle">主迴圈</text>
+  <text x="130" y="115" font-size="12.5" fill="#8a4a10" text-anchor="middle" font-family="monospace">move.b (a4)+,d0</text>
+  <text x="130" y="130" font-size="12.5" fill="#8a4a10" text-anchor="middle" font-family="monospace">jmp (tbl,d0*4)</text>
+
+  <g font-size="12.5" fill="#333">
+    <rect x="290" y="70" width="150" height="40" rx="7" fill="#fafafa" stroke="#bbb"/>
+    <text x="304" y="87">ADI</text><text x="304" y="103" font-family="monospace" font-size="11.5">…  jmp (a5)</text>
+    <rect x="290" y="126" width="150" height="40" rx="7" fill="#fafafa" stroke="#bbb"/>
+    <text x="304" y="143">LDP</text><text x="304" y="159" font-family="monospace" font-size="11.5">…  jmp (a5)</text>
+    <rect x="290" y="182" width="150" height="40" rx="7" fill="#fafafa" stroke="#bbb"/>
+    <text x="304" y="199">IXP</text><text x="304" y="215" font-family="monospace" font-size="11.5">…  jmp (a5)</text>
+    <rect x="290" y="238" width="150" height="40" rx="7" fill="#fafafa" stroke="#bbb"/>
+    <text x="304" y="255">…共 107 支</text><text x="304" y="271" font-family="monospace" font-size="11.5">…  jmp (a5)</text>
+  </g>
+  <path d="M220 103 L282 90" stroke="#5a5a5a" fill="none" marker-end="url(#a)"/>
+  <path d="M220 103 L282 146" stroke="#5a5a5a" fill="none" marker-end="url(#a)"/>
+  <path d="M220 103 L282 202" stroke="#5a5a5a" fill="none" marker-end="url(#a)"/>
+  <path d="M220 103 L282 258" stroke="#5a5a5a" fill="none" marker-end="url(#a)"/>
+  <path d="M290 296 L150 296 L150 142" stroke="#d97b29" stroke-dasharray="4 3" fill="none" marker-end="url(#ao)"/>
+  <text x="300" y="300" font-size="12.5" fill="#8a4a10">每支結尾跳回同一處</text>
+
+  <text x="40" y="340" font-size="13" fill="#444">每條指令多付一次無條件轉移，</text>
+  <text x="40" y="360" font-size="13" fill="#444">換到「分派碼只有一份」。</text>
+  <text x="40" y="388" font-size="13" fill="#8a4a10">統計跳躍目標就能找到主迴圈。</text>
+
+  <!-- 右：內嵌 -->
+  <g font-size="12.5" fill="#333">
+    <rect x="520" y="70" width="330" height="52" rx="7" fill="#fafafa" stroke="#bbb"/>
+    <text x="534" y="88">ADI</text>
+    <text x="600" y="88" font-family="monospace" font-size="11.5" fill="#8a4a10">xor ah,ah · lodsb · xchg ax,di</text>
+    <text x="600" y="105" font-family="monospace" font-size="11.5" fill="#8a4a10">shl di,1 · jmp cs:[di]</text>
+    <rect x="520" y="134" width="330" height="52" rx="7" fill="#fafafa" stroke="#bbb"/>
+    <text x="534" y="152">LDP</text>
+    <text x="600" y="152" font-family="monospace" font-size="11.5" fill="#8a4a10">xor ah,ah · lodsb · xchg ax,di</text>
+    <text x="600" y="169" font-family="monospace" font-size="11.5" fill="#8a4a10">shl di,1 · jmp cs:[di]</text>
+    <rect x="520" y="198" width="330" height="52" rx="7" fill="#fafafa" stroke="#bbb"/>
+    <text x="534" y="216">IXP</text>
+    <text x="600" y="216" font-family="monospace" font-size="11.5" fill="#8a4a10">xor ah,ah · lodsb · xchg ax,di</text>
+    <text x="600" y="233" font-family="monospace" font-size="11.5" fill="#8a4a10">shl di,1 · jmp cs:[di]</text>
+    <rect x="520" y="262" width="330" height="52" rx="7" fill="#fafafa" stroke="#bbb"/>
+    <text x="534" y="280">…</text>
+    <text x="600" y="280" font-family="monospace" font-size="11.5" fill="#8a4a10">xor ah,ah · lodsb · xchg ax,di</text>
+    <text x="600" y="297" font-family="monospace" font-size="11.5" fill="#8a4a10">shl di,1 · jmp cs:[di]</text>
+  </g>
+  <text x="520" y="340" font-size="13" fill="#444">129 支原樣內嵌，其餘併入別支。省掉一次無條件轉移，</text>
+  <text x="520" y="360" font-size="13" fill="#444">每支多付 8 個位元組（合計約佔 8%）。</text>
+  <text x="520" y="388" font-size="13" fill="#8a4a10">沒有主迴圈可找，要另外找指紋。</text>
+</svg>
