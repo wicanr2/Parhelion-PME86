@@ -53,6 +53,35 @@ func (s *System) ResolveSegment(seg uint16) (*pmachine.Segment, error) {
 	return (&liveEnv{s}).ByNumber(seg)
 }
 
+// ResolveSegment2 用 E_Rec 指標算出那一段的執行期樣貌。給測試與探路用。
+func (s *System) ResolveSegment2(erec uint16) (*pmachine.Segment, error) {
+	return (&liveEnv{s}).ByERec(erec)
+}
+
+// SegmentSwitch 是一次換段：直譯器的 E_Rec 從 From 變成 To。
+type SegmentSwitch struct {
+	From, To uint16
+	Step     uint64 // 發生在第幾條機器指令
+	InsnCS   uint16 // 做這件事的那條機器指令在哪
+	InsnIP   uint16
+}
+
+// WatchSegmentSwitches 監看直譯器的 E_Rec（`ss:3Eh`），把每一次換段記下來。
+//
+// **不用輪詢。** 兩條 p-code 之間可以換過去又換回來，輪詢只會看到沒變——
+// 而那不會報錯，只會讓某些換段看起來從沒發生過。
+//
+// 回傳的 slice 會隨著跑而長；停止監看用 s.M.Unwatch(id)。
+func (s *System) WatchSegmentSwitches() (log *[]SegmentSwitch, id int) {
+	out := new([]SegmentSwitch)
+	addr := uint32(s.M.CPU.Seg[dosgolem.SS])*16 + erecOff
+	id = s.M.WatchWord(addr, func(m *dosgolem.Machine, _ uint32, from, to uint16) {
+		cs, ip := m.Insn()
+		*out = append(*out, SegmentSwitch{From: from, To: to, Step: m.Steps, InsnCS: cs, InsnIP: ip})
+	})
+	return out, id
+}
+
 // IsIntrinsic 回報段 1 的這支程序是不是內嵌在直譯器裡的原生碼。
 func (s *System) IsIntrinsic(proc uint16) bool { return (&liveEnv{s}).Intrinsic(proc) }
 
@@ -124,6 +153,7 @@ func (e *liveEnv) Intrinsic(proc uint16) bool {
 // 直譯器狀態區裡用得到的偏移、段頭長度、內嵌程序表。
 const (
 	evecOff         = 0x3a
+	erecOff         = 0x3e
 	codeHeaderBytes = 22
 	intrinsicTable  = 0x1f56
 	intrinsicMax    = 0x2f

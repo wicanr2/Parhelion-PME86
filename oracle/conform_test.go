@@ -177,65 +177,59 @@ func TestParityAgainstTheOriginal(t *testing.T) {
 // TestSegmentResolutionMatchesTheOriginal 驗跨段呼叫那一層。
 //
 // 判準不是「我們算得出一個數字」，是**算出來的與原版切過去之後的一模一樣**：
-// 程式碼段的內容、全域資料基底、程序字典、常數池、E_Rec 五項。
+// 程式碼段的內容、全域資料基底、程序字典、常數池四項。
 //
 // 這一條特別重要，因為 Seg_Base 怎麼換算成段值是量出來的，不是手冊寫的
 // （PLAN.md 開放項目 #2）。量錯的症狀是「跳進另一段的中間」，不會報錯。
+//
+// 換段用 dosgolem 的 WatchWord 監看直譯器的 E_Rec 抓，**不輪詢**——
+// 兩條 p-code 之間可以換過去又換回來，輪詢會漏掉，而漏掉不會報錯。
 func TestSegmentResolutionMatchesTheOriginal(t *testing.T) {
 	s := bootToPME(t)
-	checked := 0
-	for i := 0; i < 20000 && checked < 3; i++ {
-		rows, err := s.Trace(1, traceBudget)
-		if err != nil || len(rows) == 0 {
-			break
-		}
-		op := rows[0].Op
-		if !((op >= 0x70 && op <= 0x77) || (op >= 0x93 && op <= 0x95)) {
-			continue
-		}
-		before := s.Regs()
-		seg := uint16(op) - 0x6f
-		if op >= 0x93 {
-			seg = uint16(s.CodeSegment(rows[0].Seg, int(rows[0].IPC)+2)[rows[0].IPC+1])
-		}
+	log, id := s.WatchSegmentSwitches()
+	defer s.M.Unwatch(id)
 
-		want, err := s.ResolveSegment(seg)
-		if err != nil {
-			t.Logf("段 %d 解不開（%v）——原版會發 segment fault 去載入，跳過", seg, err)
-			continue
-		}
+	seen, checked := 0, 0
+	for i := 0; i < 20000; i++ {
 		if _, err := s.Trace(1, traceBudget); err != nil {
 			break
 		}
-		after := s.Regs()
-		if after.ERec == before.ERec {
-			continue // 沒有真的換段（段 1 走內嵌的機器碼）
-		}
-		checked++
+		for seen < len(*log) {
+			sw := (*log)[seen]
+			seen++
+			// 停在 dispatch 邊界，所以直譯器的狀態變數這時是一致的。
+			live := s.Regs()
+			if live.ERec != sw.To {
+				continue // 這一次之後又換過，等下一輪比
+			}
+			checked++
 
-		live := s.CodeSegment(after.DS, 64)
-		if string(want.Code[:64]) != string(live) {
-			t.Errorf("段 %d：算出來的程式碼與原版切到的那一段不同", seg)
-		}
-		for _, c := range []struct {
-			name      string
-			want, got uint16
-		}{
-			{"E_Rec", after.ERec, want.ERec},
-			{"全域基底", after.EnvData + 8, want.Global},
-			{"程序字典", after.ProcDict, want.ProcDict},
-			{"常數池", after.ConstPool, want.ConstPool},
-		} {
-			if c.want != c.got {
-				t.Errorf("段 %d 的%s：原版 %04X，我們算出 %04X", seg, c.name, c.want, c.got)
+			got, err := s.ResolveSegment2(sw.To)
+			if err != nil {
+				t.Fatalf("E_Rec %04X 解不開：%v", sw.To, err)
+			}
+			for _, c := range []struct {
+				name      string
+				want, got uint16
+			}{
+				{"全域基底", live.EnvData + 8, got.Global},
+				{"程序字典", live.ProcDict, got.ProcDict},
+				{"常數池", live.ConstPool, got.ConstPool},
+			} {
+				if c.want != c.got {
+					t.Errorf("E_Rec %04X 的%s：原版 %04X，我們算出 %04X",
+						sw.To, c.name, c.want, c.got)
+				}
+			}
+			if want := s.CodeSegment(live.DS, 64); string(got.Code[:64]) != string(want) {
+				t.Errorf("E_Rec %04X：算出來的程式碼與原版切到的那一段不同", sw.To)
 			}
 		}
-		t.Logf("段 %d：程式碼段 %04X、字典 %04X、常數池 %04X、E_Rec %04X，五項全同",
-			seg, after.DS, want.ProcDict, want.ConstPool, want.ERec)
 	}
 	if checked == 0 {
-		t.Skip("這段軌跡裡沒有真的換段的呼叫")
+		t.Skip("這段軌跡裡一次換段都沒有")
 	}
+	t.Logf("監看到 %d 次換段，逐一驗過 %d 次，四項全同", len(*log), checked)
 }
 
 // TestParityAcrossASegmentSwitch 讓對拍實際走過一次真的換段。

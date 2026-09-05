@@ -51,7 +51,7 @@
 - [spec 02：p-machine 執行核心](docs/30-remake/specs/02-pmachine-core.md) — `CONFORMED`。
 
 **M0 做完。M1 的對拍迴路成立：306 條 p-code 與原版逐條一致，0 個分歧。
-跨段呼叫已完成並驗過**——段解析與原版五項全同，對拍實際走過一次換段。
+跨段呼叫已完成並驗過**——45 次換段逐一與原版對過，對拍實際走過一次換段。
 
 ```
 $ go run ./cmd/parhelion codefile -r SYSTEM.PASCAL
