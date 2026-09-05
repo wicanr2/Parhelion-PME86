@@ -12,7 +12,7 @@ import (
 // 每一支的參數次序都由原版那一支的 pop 順序讀出來，位址記在各自的註解裡。
 
 // intrinsic 執行段 1 的程序 proc。呼叫者已經把參數推在堆疊上。
-func (m *Machine) intrinsic(proc uint16) error {
+func (m *Machine) intrinsic(proc uint16, at, sp uint16) error {
 	s := m.S
 	if resumeAtOperand[proc] {
 		// **這一支做完會回到運算元那個位元組，不是它後面。**
@@ -47,9 +47,9 @@ func (m *Machine) intrinsic(proc uint16) error {
 			s.Data[dst+uint16(i)] = ch
 		}
 	case 18: // UNITREAD @0x2C5A
-		return m.unitIO(true)
+		return m.unitIO(true, at, sp)
 	case 19: // UNITWRITE @0x2C5F
-		return m.unitIO(false)
+		return m.unitIO(false, at, sp)
 
 	case 4: // 照 relocation list 修剛載入那一段 @0x1B2A
 		return m.relocate()
@@ -194,7 +194,7 @@ func nativeName(proc uint16) string {
 //
 // 也就是 Pascal 的 `UNITREAD(unit, buf, length, block, mode)` 由左往右推。
 // 做完把結果寫進 IORESULT（`ss:0E6h`，@0x2B3B 一進去就把它清成 0）。
-func (m *Machine) unitIO(read bool) error {
+func (m *Machine) unitIO(read bool, at, sp uint16) error {
 	s := m.S
 	_ = s.Pop() // mode：目前沒有用到的位元
 	blk := s.Pop()
@@ -221,15 +221,17 @@ func (m *Machine) unitIO(read bool) error {
 
 	case unit == 1 || unit == 2: // CONSOLE:／SYSTERM:
 		if read {
-			got := m.Keys
-			if len(got) > int(n) {
-				got = got[:n]
+			// **鍵盤沒東西就不要硬回。** 真機器上這個讀是會等的；
+			// 我們一條一條走沒辦法等，所以交回去讓使用端補字再繼續。
+			// 隨便回一個「讀到 0 個位元組、IORESULT 0」的話，
+			// 作業系統會把緩衝區裡的舊字元當成新按鍵，一路重複下去。
+			if len(m.Keys) < int(n) {
+				m.S.SP = sp // 退回去，補完字之後整條重跑
+				m.S.IPC = at
+				return &NeedInput{Want: int(n), Have: len(m.Keys)}
 			}
-			copy(s.Data[buf:], got)
-			m.Keys = m.Keys[len(got):]
-			if len(got) < int(n) {
-				m.setWord(ioResult, ioNoInput)
-			}
+			copy(s.Data[buf:buf+n], m.Keys[:n])
+			m.Keys = m.Keys[n:]
 			return nil
 		}
 		m.Console = append(m.Console, s.Data[buf:buf+n]...)

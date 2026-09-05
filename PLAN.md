@@ -430,6 +430,34 @@ segment fault（填 `ss:F8h`–`ss:FEh` 再 `SIGNAL` 叫醒載入 task）、
 5. **`SCXG` 存的 `si` 指著程序號**，沒有自己再存一次的原生程序回來時會
    把那個位元組當指令執行。
 
+### R11h 最後的驗證：打字進去，它會動
+
+開得起來與用得起來是兩回事。接上鍵盤走完整條路：
+
+```
+Command: E(dit, R(un, F(ile, ... [IV.2.1 R3.3]     ← 按 F
+Filer: L(dir, R(em, C(hng, ... [6R4.0]             ← 按 L
+Dir listing of what vol ? RAMDISK:
+
+RAMDISK:
+SYSTEM.MISCINFO    2  2-Sep-90           SYSTEM.PASCAL    136 14-Jan-85
+SYSTEM.EDITOR    106  9-Dec-85           SYSTEM.FILER      45 20-Dec-84
+SYSTEM.LIBRARY   102 27-Dec-84
+5/5 files<listed/in-dir>, 397 blocks used, 353 unused, 353 in largest
+```
+
+列出來的五個檔案是**作業系統自己在開機時複製過去的**，所以這一關同時驗了
+p-machine、段載入、檔案系統、記憶體磁碟、磁碟寫入、主控台與鍵盤。
+
+那幾個日期順帶把目錄讀取器驗了一次：`2-Sep-90`、`14-Jan-85`、`20-Dec-84`
+與磁碟上的 `daccess`（`B429`、`AAE1`、`A94C`）逐一對得上——
+**我們解出來的格式與 p-System 自己的 Filer 顯示的完全一致。**
+
+一條踩到才知道的規則：**鍵盤沒東西就不要硬回。** 主控台的讀在真機器上會等；
+隨便回「讀到 0 個位元組、IORESULT 0」的話，作業系統會把緩衝區裡的舊字元
+當成新按鍵，同一條指令一路重複下去。改成退回這一條、交回 `NeedInput`，
+使用端補字再繼續。
+
 細節與待解清單在 [spec 03](docs/30-remake/specs/03-boot.md)。
 
 ## 勘誤：被這一輪推翻的舊斷言

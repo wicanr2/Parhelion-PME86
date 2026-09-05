@@ -18,6 +18,8 @@ func main() {
 	n := flag.Int("n", 1000, "最多走幾條 p-code")
 	trace := flag.Int("trace", 0, "印出前幾條的軌跡")
 	peek := flag.String("peek", "", "跑完印出這些資料段位址的 word，逗號分隔")
+	keys := flag.String("keys", "", "開完機之後從鍵盤送進去的字")
+	more := flag.Int("more", 200000, "送字之後再走幾條")
 	flag.Parse()
 	if *volPath == "" {
 		flag.Usage()
@@ -50,6 +52,21 @@ func main() {
 		}
 	}
 	steps, err := m.Run(*n - *trace)
+	if psystem.WaitingForInput(err) {
+		fmt.Printf("走了 %d 條，停在等鍵盤\n", m.Steps)
+		err = nil
+	}
+	if err == nil && *keys != "" {
+		before := len(m.Console)
+		m.Keys = append(m.Keys, []byte(*keys)...)
+		steps, err = m.Run(*more)
+		fmt.Printf("送進 %q 之後又走了 %d 條，主控台多了 %d 個位元組\n",
+			*keys, steps, len(m.Console)-before)
+		if psystem.WaitingForInput(err) {
+			fmt.Println("又停在等鍵盤")
+			err = nil
+		}
+	}
 	fmt.Printf("走了 %d 條 p-code\n", m.Steps)
 	if err != nil {
 		fmt.Println("停：", err)

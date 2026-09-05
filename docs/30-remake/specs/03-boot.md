@@ -1,7 +1,7 @@
 # spec 03：自己開機
 
 狀態：**`DRAFT`**（見 [spec 閘門](../spec-workflow.md)）。
-狀態：**開到命令列了。** 一片 `.VOL` 進去，p-System 自己開起來，
+狀態：**開到命令列，而且用得動。** 一片 `.VOL` 進去，p-System 自己開起來，
 226,623 條 p-code 與原版逐條相同——那是整段開機，
 走到原版自己也停在等鍵盤的那一刻。
 
@@ -15,6 +15,23 @@ Prefix is RAMDISK
 SYSTEM.PASCAL is on RAMDISK
 Command: E(dit, R(un, F(ile, C(omp, L(ink, X(ecute, A(ssem,? [IV.2.1 R3.3]
 ```
+
+按 `F` 進 Filer、按 `L` 列目錄，列出來的是作業系統開機時自己複製過去的五個檔案：
+
+```
+Filer: L(dir, R(em, C(hng, T(rans, D(ate, Q(uit, B(ad-blks, E(xt-dir,? [6R4.0]
+Dir listing of what vol ? RAMDISK:
+
+RAMDISK:
+SYSTEM.MISCINFO    2  2-Sep-90           SYSTEM.PASCAL    136 14-Jan-85
+SYSTEM.EDITOR    106  9-Dec-85           SYSTEM.FILER      45 20-Dec-84
+SYSTEM.LIBRARY   102 27-Dec-84
+5/5 files<listed/in-dir>, 397 blocks used, 353 unused, 353 in largest
+```
+
+那幾個日期順帶把讀取器驗了一次：`2-Sep-90`、`14-Jan-85`、`20-Dec-84`
+與磁碟上 `daccess` 欄位（`B429`、`AAE1`、`A94C`）逐一對得上——
+**我們解出來的目錄格式與 p-System 自己的 Filer 顯示的完全一致。**
 
 這一份講的是「不靠原版、不靠 DOS，怎麼從一片 `.VOL` 把 p-System 跑起來」。
 p-machine 本身在 [spec 02](02-pmachine-core.md)；這裡只講宿主。
@@ -173,6 +190,16 @@ bootstrap 把它整份讀進 `0x5020`，前 5 塊另外再放一份在 `0x06F0`�
 參數次序一律由那一支的 `pop` 順序讀出來。例如 `MOVELEFT` 先 pop 個數，
 再 pop 目的的（基底, 偏移）配對，最後是來源——與 `movs` 的 `es:di ← ds:si` 對得上。
 
+### 鍵盤沒東西就不要硬回
+
+真機器上主控台的讀是**會等**的。我們一條一條走沒辦法等，所以碰到沒鍵可讀
+就退回這一條指令、把 `NeedInput` 交回去，使用端補上 `Machine.Keys` 再
+`Run` 就從同一條繼續。
+
+隨便回一個「讀到 0 個位元組、IORESULT 0」會怎樣：**作業系統把緩衝區裡的
+舊字元當成新按鍵**，於是同一個指令一路重複執行下去（實測會看到 Filer 的
+memlock／swappable 交替閃個不停）。這種錯不會報錯，只會讓機器看起來瘋掉。
+
 ### 沒掛磁碟不是錯誤
 
 作業系統開機時會把 unit 一個一個問過去。**沒掛磁碟要回 9（沒有這片磁碟），
@@ -213,7 +240,8 @@ bootstrap 把它整份讀進 `0x5020`，前 5 塊另外再放一份在 `0x06F0`�
 
 | 測試 | 釘什麼 | 現在 |
 |---|---|---|
-| `TestBootReachesTheCommandLine` | **有沒有開起來**（不需要原版） | 開到命令列 |
+| `TestBootReachesTheCommandLine` | **有沒有開起來**（不需要原版） | 開到命令列，停在等鍵盤 |
+| `TestFilerListsTheRAMDisk` | **用不用得動**（不需要原版） | `F`→`L`→列出五個檔案 |
 | `TestSelfBootMatchesTheOriginal` | 跑出來的 p-code 一不一樣 | 226,623 條，整段開機 |
 | `TestSelfBootInitialStateDiff` | 開機那一刻的狀態建對了沒 | 還有 409 段，其中 397 段是宿主的機器碼 |
 

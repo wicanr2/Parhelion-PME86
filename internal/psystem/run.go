@@ -33,8 +33,25 @@ func (e *IOError) Error() string {
 	return fmt.Sprintf("psystem: %04Xh 的 IOCHECK 發現 IORESULT ＝ %d", e.IPC, e.Result)
 }
 
+// NeedInput 是「鍵盤沒東西可以讀」。
+//
+// **與錯誤不同**：機器好好的，只是在等人打字。補上 `Machine.Keys` 再呼叫
+// `Run` 就會從同一條指令繼續。
+type NeedInput struct{ Want, Have int }
+
+func (e *NeedInput) Error() string {
+	return fmt.Sprintf("psystem: 在等鍵盤（要 %d 個位元組，手上有 %d 個）", e.Want, e.Have)
+}
+
+// WaitingForInput 回報停下來的原因是不是「在等鍵盤」。
+func WaitingForInput(err error) bool {
+	var ni *NeedInput
+	return errors.As(err, &ni)
+}
+
 // Step 走一條 p-code；碰到宿主該做的事就當場做掉，做完算同一步。
 func (m *Machine) Step() error {
+	at, sp := m.S.IPC, m.S.SP
 	_, err := m.S.Step()
 	m.Steps++
 	if err == nil {
@@ -44,7 +61,7 @@ func (m *Machine) Step() error {
 	var ic *pmachine.IntrinsicCall
 	if errors.As(err, &ic) {
 		m.Traps[ic.Proc]++
-		return m.intrinsic(ic.Proc)
+		return m.intrinsic(ic.Proc, at, sp)
 	}
 	var nr *pmachine.NotResident
 	if errors.As(err, &nr) {

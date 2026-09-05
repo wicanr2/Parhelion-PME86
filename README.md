@@ -77,6 +77,22 @@ Command: E(dit, R(un, F(ile, C(omp, L(ink, X(ecute, A(ssem,? [IV.2.1 R3.3]
 **這一段沒有經過原版，也沒有經過 DOS。** 一片 `.VOL` 進去，p-System 自己開起來，
 而且整段開機的 226,623 條 p-code 與原版逐條相同。
 
+打字進去它會動：
+
+```
+$ go run ./cmd/boot -vol PSYSTEM.VOL -keys $'FLRAMDISK:\r'
+Filer: L(dir, R(em, C(hng, T(rans, D(ate, Q(uit, B(ad-blks, E(xt-dir,? [6R4.0]
+Dir listing of what vol ? RAMDISK:
+
+RAMDISK:
+SYSTEM.MISCINFO    2  2-Sep-90           SYSTEM.PASCAL    136 14-Jan-85
+SYSTEM.EDITOR    106  9-Dec-85           SYSTEM.FILER      45 20-Dec-84
+SYSTEM.LIBRARY   102 27-Dec-84
+5/5 files<listed/in-dir>, 397 blocks used, 353 unused, 353 in largest
+```
+
+那五個檔案是**作業系統自己在開機時複製到記憶體磁碟上的**。
+
 ```
 $ go run ./cmd/parhelion codefile -r SYSTEM.PASCAL
 69632 位元組（136 blocks），28 個 segment
