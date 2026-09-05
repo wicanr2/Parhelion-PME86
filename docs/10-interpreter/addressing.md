@@ -108,6 +108,51 @@ p-code 的變數編號從 1 起算不是慣例問題，是版面算出來的結�
 
 同樣的「加 8」。差別只在基底是從 `E_Vec` 查出來的，不是常駐的 `dx`。
 
+## 返回：三條路，不是一條
+
+`RPU`（@0x1102）把活動記錄拆掉之後，**要跳到哪裡取決於兩個值的形狀**：
+
+```
+1155: pop si            ; MSIPC
+1156: pop ax            ; MSENV，丟掉
+1157: pop bp            ; MSPROC
+1158: add sp, word_D4   ; 削掉參數
+115c: mov word_32, bp
+1160: test bp, bp
+1162: js  1175          ; MSPROC 是負的 → 走 EXITIC
+1164: test si, si
+1166: jz  11A5          ; MSIPC 是 0  → 返回原生碼
+1168: 一般路徑：從 MSIPC 繼續
+```
+
+**MSPROC 是負的，表示這一格正在被 `EXIT` 拆掉。** Pascal 的 `EXIT(proc)`
+可以一次退出好幾層，做法是把沿路每一格的 `MSPROC` 取負；返回時看到負號，
+就不回 `MSIPC`，改跳到那支程序自己的**離場碼**（`EXITIC`）：
+
+```
+1175: neg word_32       ; 把負號去掉
+1179: shl bp            ; bp 還是負的 → 下一句就是「字典基底 − 2×程序號」
+117b: add bp, word_36
+117f: mov bp, es:[bp]   ; 字典項，指的是 DATASIZE
+1183: dec bp            ; 退一個 word ＝ EXITIC
+1184: shl bp
+1186: mov ax, es:[bp]
+118a: test si, si
+118c: jz  11A1
+118e: cmp si, ax
+1190: jae 1194          ; 返回點已經在離場碼後面 → 留著它
+1192: mov si, ax
+```
+
+最後那個比較是重點：**兩個位址取比較後面的那一個**。
+已經走過離場碼就不要再跳回去，不然 `finally` 那段會跑兩次。
+
+**MSIPC 是 0，表示呼叫這一格的是原生碼**（@0x11A5 是一個 `lret`）。
+p-code 這一側沒有東西可以跳，只能把控制權交回機器碼的世界。
+
+三條路的差別只在兩個 word 的符號與零。搞錯的話不會當場報錯，
+只會跳到別的地方去執行。
+
 ## packed 欄位：查表比算便宜
 
 手冊 p.47 把 packed field 的位址定義成堆疊上的三個 word：位址、位元數、最右 bit 編號。

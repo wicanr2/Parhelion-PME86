@@ -189,12 +189,17 @@ dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
 3. [定址與活動記錄](docs/10-interpreter/addressing.md)
    — word 世界換到位元組世界的那一層，以及變數編號為什麼從 1 開始。
 4. [段的切換](docs/10-interpreter/segment-switching.md)
-   — `E_Rec`、`SIB`、程式碼段表頭、程序字典，還有內嵌在直譯器裡的 33 支程序。
-5. [256 格對照表](docs/10-interpreter/opcode-map.md)
+   — `E_Rec`、`SIB`、程式碼段表頭、程序字典。
+5. [段 1 的內嵌原生程序](docs/10-interpreter/native-intrinsics.md)
+   — p-code 與機器碼的交界在哪。26 支各是什麼，界線是直譯器自己畫的。
+6. [多工與換 task](docs/10-interpreter/tasking.md)
+   — 號誌、ready queue、TIB，以及「把整張 dispatch 表填成同一個位址」那一招。
+7. [256 格對照表](docs/10-interpreter/opcode-map.md)
    — 逐格：IV.0 助記符、常式偏移、指令數。
 
 格式：[`.VOL` 磁碟映像](docs/20-formats/vol-image.md)、
-[`SYSTEM.PME.86` 的檔頭](docs/20-formats/pme86-header.md)。
+[`SYSTEM.PME.86` 開頭那 512 個位元組](docs/20-formats/pme86-header.md)
+——那不是檔頭，是直譯器自己的初始資料。
 
 重做：[可行性評估](docs/30-remake/feasibility.md)、
 [spec 閘門](docs/30-remake/spec-workflow.md)、
