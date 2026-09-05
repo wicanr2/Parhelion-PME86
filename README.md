@@ -49,9 +49,11 @@
 - [spec 閘門](docs/30-remake/spec-workflow.md) — `DRAFT` → `READY` → `CONFORMED`。
 - [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — `CONFORMED`。
 - [spec 02：p-machine 執行核心](docs/30-remake/specs/02-pmachine-core.md) — `CONFORMED`。
+- [spec 03：自己開機](docs/30-remake/specs/03-boot.md) — `DRAFT`。
 
-**M0 做完。M1：210 個指令全部實作，對拍走完整段開機——12,924 條 p-code
-與原版逐條一致，0 個分歧。
+**M0 做完。M1：210 個指令全部實作，對拍走完整段開機——224,987 條 p-code
+與原版逐條一致，0 個分歧。M2 開工：不靠原版也不靠 DOS，
+[自己從磁碟映像開機](docs/30-remake/specs/03-boot.md)。
 跨段呼叫已完成並驗過**——45 次換段逐一與原版對過，對拍實際走過一次換段。
 
 ```
@@ -86,16 +88,16 @@ dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
 
 ```
 $ tools/go.sh run -tags oracle ./cmd/parity -pme .../SYSTEM.PME.86
-兩邊一致地走了 12924 條 p-code
-另有 191 條交給原版自己走（宿主的工作，**沒有驗證**）： 70 SCXG1×184 DE SIGNAL×4 DF WAIT×3
+兩邊一致地走了 224987 條 p-code
+另有 1636 條交給原版自己走（宿主的工作，**沒有驗證**）： 70 SCXG1×1617 DE SIGNAL×5 DF WAIT×7 94 CXG×7
 停下來的原因： oracle: 原版沒有再執行 p-code（多半停在等輸入的迴圈）
 
-用到 130 種 opcode：…
+用到 173 種 opcode：…
 ```
 
 停下來是因為**原版沒事做了**——開機跑完，系統停在等鍵盤的迴圈。
 
-交給原版走的 191 條是 p-machine 依定義就要交出去的四種：段 1 的內嵌原生程序、
+交給原版走的 1,636 條是 p-machine 依定義就要交出去的四種：段 1 的內嵌原生程序、
 `NAT`（跳進 8086 機器碼）、段還沒載入、換 task。
 **p-code 指令沒實作不算**，不然「還沒做」會看起來像「做完了」。
 

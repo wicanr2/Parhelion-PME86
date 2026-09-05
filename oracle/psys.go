@@ -169,11 +169,16 @@ func (s *System) LocatePME(pmePath string) (uint32, error) {
 // p-code 全部錯過了**——而那正是最容易拿來對拍的一段。
 func (s *System) WaitForPME(pmePath string, maxSteps, chunk uint64) (uint32, error) {
 	if chunk == 0 {
-		chunk = 250_000
+		chunk = 200
 	}
 	for s.M.Steps < maxSteps && !s.D.Exited {
+		// **找到映像還不夠。** 載入器要先把 dispatch 表搬到映像偏移 0，
+		// 在那之前那 512 個位元組還是別的東西，照它建出來的常式位址是垃圾，
+		// 而軌跡會安靜地一條都抓不到。
 		if base, err := s.LocatePME(pmePath); err == nil {
-			return base, nil
+			if same, total, err := s.DispatchMoved(); err == nil && same == total {
+				return base, nil
+			}
 		}
 		if err := s.Run(chunk); err != nil {
 			return 0, err

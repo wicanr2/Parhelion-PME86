@@ -100,10 +100,14 @@ func main() {
 		cs := agg[k]
 		c := cs[0]
 		delta := int(c.spAfter) - int(c.spBefore)
-		fmt.Printf("%-6s proc %-3d  ×%-4d  sp %+d word  bytes %02X\n",
-			pcode.Mnemonic(k.op), k.proc, len(cs), delta/2, c.bytes)
+		kind := "p-code"
+		if k.op == 0x70 && s.IsIntrinsic(k.proc) {
+			kind = "原生"
+		}
+		fmt.Printf("%-6s proc %-3d  ×%-4d  sp %+d word  %s\n",
+			pcode.Mnemonic(k.op), k.proc, len(cs), delta/2, kind)
 		for j, c := range cs {
-			if j >= 3 {
+			if j >= 2 {
 				break
 			}
 			fmt.Printf("      進 %04X: %v\n      出 %04X: %v\n",

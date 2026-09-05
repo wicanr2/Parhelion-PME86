@@ -132,6 +132,15 @@ func (e *liveEnv) ByNumber(seg uint16) (*pmachine.Segment, error) {
 //
 // 指標為 0 表示那一段就在直譯器自己的段裡（@0x1BEE 的 `test bp,bp; jz`）。
 // 偏移為 0 表示段不在記憶體——原版這時退回指令開頭發 segment fault（@0x143d）。
+// Globals 只走兩層就到全域資料：E_Vec → E_Rec → Env_Data（@0x15D2）。
+func (e *liveEnv) Globals(seg uint16) (uint16, error) {
+	erec := e.s.DataWord(e.s.DataWord(evecOff) + 2*seg)
+	if erec == 0 {
+		return 0, fmt.Errorf("oracle: E_Vec 裡沒有段 %d", seg)
+	}
+	return e.s.DataWord(erec) + 8, nil
+}
+
 func (e *liveEnv) ByERec(erec uint16) (*pmachine.Segment, error) {
 	envData := e.s.DataWord(erec)
 	sib := e.s.DataWord(erec + 4)

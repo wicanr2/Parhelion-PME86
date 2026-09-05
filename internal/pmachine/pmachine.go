@@ -92,6 +92,11 @@ type Segment struct {
 type Environment interface {
 	// ByNumber 用 segment number 找段。段不在記憶體時回 ErrNotResident。
 	ByNumber(seg uint16) (*Segment, error)
+	// Globals 回那一段的全域資料基底（Env_Data+8）。
+	//
+	// **不查 SIB，也不管段在不在記憶體。** `LAE`／`LDE`／`STE` 碰的是
+	// 全域資料不是程式碼——助手 @0x15D2 只走 E_Vec → E_Rec → Env_Data 兩層。
+	Globals(seg uint16) (uint16, error)
 	// ByERec 用 E_Rec 指標找段，返回跨段呼叫時要用。
 	ByERec(erec uint16) (*Segment, error)
 
@@ -966,6 +971,15 @@ func (s *State) callExternal(seg, proc, link uint16) error {
 	return nil
 }
 
+// Pop 取堆疊頂一個 word。宿主做內嵌原生程序時要用。
+func (s *State) Pop() uint16 { return s.pop() }
+
+// Push 推一個 word。
+func (s *State) Push(v uint16) { s.push(v) }
+
+// Enter 把目前的執行環境換成另一段。宿主開機時用它落到第一段。
+func (s *State) Enter(t *Segment) { s.enter(t) }
+
 // enter 把目前的執行環境換成另一段（@0x0fba）。
 func (s *State) enter(t *Segment) {
 	s.Code = t.Code
@@ -1132,11 +1146,11 @@ func (s *State) extended() (uint16, error) {
 	if s.Env == nil {
 		return 0, &Fault{s.IPC, "沒有 Environment，跨段全域變數讀不了"}
 	}
-	t, err := s.Env.ByNumber(seg)
+	base, err := s.Env.Globals(seg)
 	if err != nil {
 		return 0, err
 	}
-	return t.Global + s.bytes(), nil
+	return base + s.bytes(), nil
 }
 
 // wordFrom 依 mode 取一個 word：0 是資料段，非 0 是程式碼段的常數區塊。

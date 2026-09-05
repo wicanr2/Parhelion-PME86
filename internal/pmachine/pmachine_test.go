@@ -220,6 +220,15 @@ func (e *fakeEnv) ByNumber(n uint16) (*Segment, error) {
 	return nil, ErrNotResident
 }
 
+// Globals 不查 SIB——跨段讀全域變數不需要那一段在記憶體裡。
+// 測試裡拿 byNum 的 Global 當答案；查不到才算沒有那一段。
+func (e *fakeEnv) Globals(n uint16) (uint16, error) {
+	if s, ok := e.byNum[n]; ok {
+		return s.Global, nil
+	}
+	return 0, ErrNotResident
+}
+
 func (e *fakeEnv) ByERec(r uint16) (*Segment, error) {
 	if s, ok := e.byERec[r]; ok {
 		return s, nil
