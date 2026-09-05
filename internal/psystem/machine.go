@@ -21,8 +21,6 @@ const (
 	dataSeg       = 0x04D1 // 資料段的 paragraph，沿用原版的值好逐條對照
 	codeBase      = 0xD800 // 開機那一段程式碼在資料段裡的位置
 	sysCom        = 0x00E6 // SYSCOM：單元表與 I/O 狀態
-	bootUnit      = 14     // 開機磁碟的 unit 編號
-	ramDiskUnit   = 13     // 記憶體磁碟
 	ramDiskBlocks = 750    // 量原版量到的大小
 	// 畫面大小寫在 SYSTEM.MISCINFO 裡（0x4A 是高、0x4C 是寬）。
 	screenWidth    = 80
@@ -48,9 +46,11 @@ type Machine struct {
 	Steps uint64 // 走過幾條 p-code
 	Traps map[uint16]int
 
-	// Units 是 unit 編號對磁碟。開機磁碟是 14——那是這台 DOS 主機的分配，
-	// 由原版實際發出的 UNITREAD 量到的，不是手冊規定的。
+	// Units 是 unit 編號對磁碟。哪個編號是什麼，由 SYSTEM.CONFIG 決定。
 	Units map[uint16]*Volume
+
+	// Devices 是 SYSTEM.CONFIG 解出來的裝置表。
+	Devices []Device
 
 	// Clock 是系統時鐘，1／60 秒為單位，`TIME` 讀的就是它。
 	Clock uint32
@@ -139,7 +139,7 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	m := &Machine{
 		Mem: make([]byte, MemSize), Vol: v, Boot: boot,
 		Traps: map[uint16]int{},
-		Units: map[uint16]*Volume{bootUnit: v},
+		Units: map[uint16]*Volume{},
 		Clock: opt.Clock,
 	}
 	m.Screen = NewScreen(screenWidth, screenHeight)
@@ -221,6 +221,17 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 			n = len(cfg)
 		}
 		copy(data[configWorkBase:], cfg[:n])
+		m.Devices = ParseConfig(cfg)
+	}
+
+	// 哪個 unit 是開機磁碟、哪個是記憶體磁碟，由設定檔決定，不是寫死的。
+	if u, ok := FindUnit(m.Devices, driverDOSVol); ok {
+		m.Units[u] = v
+	}
+	if u, ok := FindUnit(m.Devices, driverRAMDisk); ok {
+		if rd := NewRAMDisk("RAMDISK", ramDiskBlocks); rd != nil {
+			m.Units[u] = rd
+		}
 	}
 
 	// 作業系統 codefile 的 segment dictionary 原封不動搬一塊進來，
@@ -236,11 +247,6 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	// 全域變數 1 指向 SYSCOM（系統通訊區）。作業系統一開口就要它。
 	m.setWord(stateBase+8, 1)
 	m.setWord(stateBase+10, sysCom)
-
-	// unit 13 是這台主機的記憶體磁碟，開機時是空的。
-	if rd := NewRAMDisk("RAMDISK", ramDiskBlocks); rd != nil {
-		m.Units[ramDiskUnit] = rd
-	}
 
 	seg, err := m.ByERec(erec)
 	if err != nil {

@@ -35,6 +35,14 @@ func main() {
 	}
 	fmt.Printf("磁碟 %q，起始段 %s（block %d、%d words、%d 支常式）\n",
 		m.Vol.ID, m.Boot.Name, m.Boot.Block, m.Boot.Words, len(m.Boot.Routines))
+	if len(m.Devices) > 0 {
+		fmt.Printf("SYSTEM.CONFIG 解出 %d 個裝置：\n", len(m.Devices))
+		for _, d := range m.Devices {
+			if d.Unit != 0 {
+				fmt.Println("  ", d)
+			}
+		}
+	}
 	fmt.Printf("起點 IPC %04X  SP %04X  MP %04X  E_Rec %04X\n\n",
 		m.S.IPC, m.S.SP, m.S.Local-8, m.S.ERec)
 

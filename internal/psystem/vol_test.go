@@ -72,3 +72,49 @@ func TestTruncatedImageIsAnError(t *testing.T) {
 		t.Fatal("只有一個 block 的映像卻讀出了目錄")
 	}
 }
+
+// SYSTEM.CONFIG 決定哪個 unit 是什麼。認錯的話，作業系統會在一台不存在的
+// 磁碟上找檔案，而症狀會出現在很遠的地方。
+func TestParseConfigMapsDiskUnits(t *testing.T) {
+	// 一筆 40 個位元組：第幾個、類別、（保留）、共用旗標、名字長度、名字。
+	rec := func(instance, class, shared int, name string) []byte {
+		r := make([]byte, configRecord)
+		r[0], r[1], r[3] = byte(instance), byte(class), byte(shared)
+		r[4] = byte(len(name))
+		copy(r[5:], name)
+		return r
+	}
+	var cfg []byte
+	for _, r := range [][]byte{
+		rec(0, classConsole, 0, "CONSOL.DRV"),
+		rec(0, classDisk, 0, "FLOPPY.DRV"),
+		rec(1, classDisk, 3, "FLOPPY.DRV"),
+		rec(6, classDisk, 0, driverRAMDisk),
+		rec(7, classDisk, 0, driverDOSVol),
+	} {
+		cfg = append(cfg, r...)
+	}
+
+	devs := ParseConfig(cfg)
+	if len(devs) != 5 {
+		t.Fatalf("解出 %d 筆", len(devs))
+	}
+	// 磁碟類的第 0、1 個是 unit 4、5；第 6、7 個是 13、14。
+	for i, want := range map[int]uint16{1: 4, 2: 5, 3: 13, 4: 14} {
+		if devs[i].Unit != want {
+			t.Errorf("第 %d 筆是 unit %d，該是 %d", i, devs[i].Unit, want)
+		}
+	}
+	if devs[0].Unit != 0 {
+		t.Errorf("主控台那一類的編號還沒解出來，不該亂填：%d", devs[0].Unit)
+	}
+	if !devs[2].Shared {
+		t.Error("第二台軟碟該標成共用驅動")
+	}
+	if u, ok := FindUnit(devs, driverRAMDisk); !ok || u != 13 {
+		t.Errorf("記憶體磁碟找到 unit %d（%v）", u, ok)
+	}
+	if u, ok := FindUnit(devs, driverDOSVol); !ok || u != 14 {
+		t.Errorf("開機磁碟找到 unit %d（%v）", u, ok)
+	}
+}

@@ -309,17 +309,21 @@ func (m *Machine) unitStatus(unit uint16) uint16 {
 	return ioNoVolume
 }
 
-// deviceStatus 是這台機器上除了磁碟之外還有哪些裝置在。
+// deviceStatus 是「有磁碟以外，哪些 unit 會回答『我在』」。
 //
-// **量原版量出來的**：作業系統開機時會把 unit 2 到 22 問過一遍，
-// 答案不是「有」就是「沒有」——只有 unit 3 回的是 3（不支援這種請求），
-// 那是它與「沒有這片磁碟」的差別。unit 128 是這台 DOS 主機自己的檔案系統閘道。
+// 掛了磁碟的那幾個由 `SYSTEM.CONFIG` 決定（見 `ParseConfig`），
+// 這張表補的是剩下的：
+//
+//	1、2   主控台與系統終端機
+//	3      回 3（不支援這種請求），與「沒有這片磁碟」是兩個不同的答案
+//	4      軟碟機在，但裡面沒有磁碟——**這一格量出來的**，
+//	       設定檔說得出「有一台軟碟機」，說不出「裡面有沒有片子」
+//	128    這台 DOS 主機自己的檔案系統閘道
 var deviceStatus = map[uint16]uint16{
-	1: 0, 2: 0, // CONSOLE:／SYSTERM:
-	3:   ioBadRequest,
-	4:   0,
-	13:  0,
-	128: 0,
+	1: 0, 2: 0,
+	3:        ioBadRequest,
+	4:        0,
+	hostGate: 0,
 }
 
 // IORESULT 與幾個用得到的碼（手冊 p.117 的 I/O 錯誤表）。
