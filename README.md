@@ -53,9 +53,22 @@
 
 **M0 做完。M1：210 個指令全部實作，對拍走完整段開機——224,987 條 p-code
 與原版逐條一致，0 個分歧。M2 開工：不靠原版也不靠 DOS，
-[自己從磁碟映像開機](docs/30-remake/specs/03-boot.md)——目前走 33,002 條
-與原版逐條相同，停在排程器。
+[自己從磁碟映像開機](docs/30-remake/specs/03-boot.md)——走 40,619 條
+與原版逐條相同，螢幕上已經出現版權字串。
 跨段呼叫已完成並驗過**——45 次換段逐一與原版對過，對拍實際走過一次換段。
+
+```
+$ go run ./cmd/boot -vol PSYSTEM.VOL -n 41000
+磁碟 "PSYSTEM"，起始段 USERPROG（block 1、3831 words、41 支常式）
+起點 IPC 1AB8  SP D7C2  MP D7C2  E_Rec D7D2
+
+走完 41000 條，沒有停下來的理由
+
+主控台收到 74 個位元組：
+<ESC>H<ESC>E<ESC>Y8 Copyright 1979 U.C. Regents; Copyright 1985 SofTech Microsystems<ESC>H
+```
+
+**這一段沒有經過原版，也沒有經過 DOS。** 一片 `.VOL` 進去，p-System 自己開起來。
 
 ```
 $ go run ./cmd/parhelion codefile -r SYSTEM.PASCAL
@@ -89,8 +102,8 @@ dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
 
 ```
 $ tools/go.sh run -tags oracle ./cmd/parity -pme .../SYSTEM.PME.86
-兩邊一致地走了 224987 條 p-code
-另有 1636 條交給原版自己走（宿主的工作，**沒有驗證**）： 70 SCXG1×1617 DE SIGNAL×5 DF WAIT×7 94 CXG×7
+兩邊一致地走了 224999 條 p-code
+另有 1624 條交給原版自己走（宿主的工作，**沒有驗證**）： 70 SCXG1×1617 94 CXG×7
 停下來的原因： oracle: 原版沒有再執行 p-code（多半停在等輸入的迴圈）
 
 用到 173 種 opcode：…
@@ -98,8 +111,8 @@ $ tools/go.sh run -tags oracle ./cmd/parity -pme .../SYSTEM.PME.86
 
 停下來是因為**原版沒事做了**——開機跑完，系統停在等鍵盤的迴圈。
 
-交給原版走的 1,636 條是 p-machine 依定義就要交出去的四種：段 1 的內嵌原生程序、
-`NAT`（跳進 8086 機器碼）、段還沒載入、換 task。
+交給原版走的 1,624 條是 p-machine 依定義就要交出去的：段 1 的內嵌原生程序，
+以及段還沒載入。
 **p-code 指令沒實作不算**，不然「還沒做」會看起來像「做完了」。
 
 軌跡讀起來就是 Pascal：

@@ -23,7 +23,7 @@ const (
 	// 下限釘住的是**開機狀態不能建錯**。走不完不是這個測試的失敗——
 	// 那表示 bootstrap 還有沒重建出來的東西，而那是下一輪的工作。
 	selfBootWant  = 300_000
-	selfBootFloor = 33_000
+	selfBootFloor = 40_000
 )
 
 func TestSelfBootMatchesTheOriginal(t *testing.T) {
@@ -81,13 +81,13 @@ func TestSelfBootMatchesTheOriginal(t *testing.T) {
 		if bad != "" {
 			t.Log(bad)
 			t.Logf("  進這一條時 sp=%04X tos=%04X", spIn, tosIn)
+			for _, d := range s.DataDiff(m.S, 20) {
+				t.Log("  資料段不同：", d)
+			}
 			if more, err := s.Trace(5, traceBudget); err == nil {
 				for _, r := range more {
 					t.Log("  原版接下來：", r)
 				}
-			}
-			for _, d := range s.DataDiff(m.S, 8) {
-				t.Log("  資料段不同：", d)
 			}
 			break
 		}

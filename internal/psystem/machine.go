@@ -41,6 +41,13 @@ type Machine struct {
 	// 由原版實際發出的 UNITREAD 量到的，不是手冊規定的。
 	Units map[uint16]*Volume
 
+	// Clock 是系統時鐘，1／60 秒為單位，`TIME` 讀的就是它。
+	Clock uint32
+
+	// IOLog 記下每一次裝置呼叫。診斷用——I/O 的結果會透過 IORESULT 傳很遠，
+	// 出錯的地方與看到症狀的地方通常隔了幾千條指令。
+	IOLog []string
+
 	Console []byte // 寫到主控台的位元組
 	Keys    []byte // 還沒被讀走的鍵盤輸入
 }
@@ -60,6 +67,9 @@ type Options struct {
 	// bootstrap 會把它蓋進**記憶體裡那份目錄**的第 0 筆 +14h，
 	// 磁碟上那份不動。作業系統之後就拿它當「這次開機的日期」。
 	Date uint16
+
+	// Clock 是開機那一刻的系統時鐘。
+	Clock uint32
 }
 
 // PackDate 把年月日打包成 UCSD 的日期 word。年是西元後兩位。
@@ -107,6 +117,7 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 		Mem: make([]byte, MemSize), Vol: v, Boot: boot,
 		Traps: map[uint16]int{},
 		Units: map[uint16]*Volume{bootUnit: v},
+		Clock: opt.Clock,
 	}
 	data := m.Mem[dataSeg*16 : dataSeg*16+0x10000]
 	m.S = &pmachine.State{Data: data, Env: m}

@@ -60,6 +60,9 @@ func report(m *psystem.Machine) {
 	if len(m.Console) > 0 {
 		fmt.Printf("\n主控台收到 %d 個位元組：\n%s\n", len(m.Console), visible(m.Console))
 	}
+	for _, l := range m.IOLog {
+		fmt.Println("  io:", l)
+	}
 	if len(m.Traps) == 0 {
 		return
 	}

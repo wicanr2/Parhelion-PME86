@@ -88,6 +88,15 @@ func (m *Machine) intrinsic(proc uint16) error {
 	case 39, 46: // 把一段從磁碟讀進 codepool @0x1BAF
 		return m.loadSegment()
 
+	case 34, 44: // 等裝置做完 @0x2C36：模式碼 4，只吃一個 unit
+		m.setWord(ioResult, m.unitStatus(s.Pop()))
+
+	case 20: // TIME(var hi, lo) @0x2CB8：系統時鐘，單位是 1／60 秒
+		lo := s.Pop()
+		hi := s.Pop()
+		m.setWord(lo, uint16(m.Clock))
+		m.setWord(hi, uint16(m.Clock>>16))
+
 	case 30: // IORESULT @0x2B02：丟掉函式結果的位置，換成 ss:0E6h
 		s.Pop()
 		s.Push(m.word(ioResult))
@@ -127,6 +136,10 @@ func nativeName(proc uint16) string {
 		return "在兩個池內段之間搬 word @0x1AE4"
 	case 22:
 		return "SCAN @0x1992"
+	case 31, 42, 33, 43:
+		return "裝置模式碼 3（清除？）@0x2BF1／@0x2BF7"
+	case 36, 45:
+		return "裝置模式碼 8（狀態？）@0x2C1B"
 	case 24:
 		return "從池內段搬進資料段 @0x1A6E"
 	case 25:
@@ -160,6 +173,14 @@ func (m *Machine) unitIO(read bool) error {
 	unit := s.Pop()
 
 	m.setWord(ioResult, 0)
+	defer func() {
+		what := "寫"
+		if read {
+			what = "讀"
+		}
+		m.logIO("%s unit %d block %d 長度 %d 緩衝 %04X → IORESULT %d",
+			what, unit, blk, n, buf, m.word(ioResult))
+	}()
 	if int(buf)+int(n) > len(s.Data) {
 		m.setWord(ioResult, ioBadRequest)
 		return nil
@@ -182,11 +203,11 @@ func (m *Machine) unitIO(read bool) error {
 		return nil
 
 	default:
-		v := m.Units[unit]
-		if v == nil {
-			m.setWord(ioResult, ioBadUnit)
+		if r := m.unitStatus(unit); r != 0 {
+			m.setWord(ioResult, r)
 			return nil
 		}
+		v := m.Units[unit]
 		lo := int(blk) * Block
 		if !read {
 			// 寫回磁碟還沒做。**不要靜靜地當成功**——那會讓檔案系統以為
@@ -204,6 +225,27 @@ func (m *Machine) unitIO(read bool) error {
 	}
 }
 
+// logIO 記一行裝置呼叫。上限是刻意的：開機會發幾百次，全留會蓋掉重點。
+func (m *Machine) logIO(format string, a ...any) {
+	if len(m.IOLog) < 200 {
+		m.IOLog = append(m.IOLog, fmt.Sprintf(format, a...))
+	}
+}
+
+// unitStatus 回報這個 unit 現在能不能用。
+//
+// **沒掛磁碟不是「錯的 unit 編號」。** 作業系統開機時會一個一個問過去，
+// 得到 9（沒有這片磁碟）是正常結果，得到 0 會讓它以為那台有東西。
+func (m *Machine) unitStatus(unit uint16) uint16 {
+	switch {
+	case unit == 1 || unit == 2:
+		return 0
+	case m.Units[unit] != nil:
+		return 0
+	}
+	return ioNoVolume
+}
+
 // IORESULT 與幾個用得到的碼（手冊 p.117 的 I/O 錯誤表）。
 const (
 	ioResult       = 0x00E6
@@ -211,6 +253,7 @@ const (
 	ioBadUnit      = 2
 	ioBadRequest   = 3
 	ioNoInput      = 4
+	ioNoVolume     = 9
 	ioWriteProtect = 16
 )
 
@@ -247,6 +290,10 @@ func (m *Machine) loadSegment() error {
 	default:
 		copy(m.Mem[dst:dst+n], v.data[blk*Block:])
 	}
+	m.logIO("載段 E_Rec %04X SIB %04X：base %04X/%04X leng %04X blk %04X unitp %04X"+
+		" → unit %d block %d 長度 %d 池 %05X，IORESULT %d",
+		erec, sib, m.word(sib), m.word(sib+2), m.word(sib+0x14), m.word(sib+0x16),
+		m.word(sib+0x18), unit, blk, n, dst, m.word(ioResult))
 	s.Push(m.word(ioResult))
 	return nil
 }

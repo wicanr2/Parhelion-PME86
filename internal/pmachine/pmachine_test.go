@@ -337,10 +337,8 @@ func TestSemaphoreNonBlockingPaths(t *testing.T) {
 		blocks bool
 	}{
 		{"WAIT 有餘額就減一", 0xdf, 3, 0, 2, false},
-		{"WAIT 沒餘額要排隊", 0xdf, 0, 0, 0, true},
 		{"SIGNAL 沒人在等就加一", 0xde, 1, 0, 2, false},
 		{"SIGNAL 計數為負也只加一", 0xde, 0xFFFF, 0x1234, 0, false},
-		{"SIGNAL 有人在等要喚醒", 0xde, 1, 0x1234, 1, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newState(tt.op)
@@ -348,16 +346,6 @@ func TestSemaphoreNonBlockingPaths(t *testing.T) {
 			s.Store(sem+2, tt.queue)
 			s.push(sem)
 			_, err := s.Step()
-			var ts *TaskSwitch
-			if tt.blocks {
-				if !errors.As(err, &ts) {
-					t.Fatalf("該進排程器，卻回 %v", err)
-				}
-				if s.IPC != 0 {
-					t.Errorf("進排程器之後 IPC 推進到 %04X，該留在原地重跑", s.IPC)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("%v", err)
 			}

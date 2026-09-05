@@ -640,16 +640,32 @@ func (s *State) Step() (uint8, error) {
 			s.Store(sem, n-1)
 			break
 		}
-		s.IPC = at
-		return op, &TaskSwitch{IPC: at, Why: "號誌沒有餘額，這個 task 要排隊"}
+		// 沒有餘額：把自己從 ready queue 拿掉，依優先權排進號誌的等待佇列，
+		// 記下在等哪個號誌，然後換人。
+		me := s.readyRemoveCurrent()
+		s.Store(sem+2, s.queueInsert(s.Load(sem+2), me))
+		s.Store(me+0x14, sem)
+		if err := s.switchTask(); err != nil {
+			return op, err
+		}
 	case 0xde: // SIGNAL @0x17d5 → 助手 @0x1791
 		sem := s.pop()
 		if int16(s.Load(sem)) < 0 || s.Load(sem+2) == 0 {
 			s.Store(sem, s.Load(sem)+1)
 			break
 		}
-		s.IPC = at
-		return op, &TaskSwitch{IPC: at, Why: "有 task 在等這個號誌，要喚醒它"}
+		// 有人在等：把佇列頭那個叫起來，放進 ready queue。
+		woken := s.Load(sem + 2)
+		s.Store(sem+2, s.Load(woken))
+		s.Store(woken, 0)
+		s.Store(woken+0x14, 0)
+		s.Store(readyQueue, s.queueInsert(s.Load(readyQueue), woken))
+		// 叫起來的那個優先權不低於自己才換人（@0x17C7 的 `jb`）。
+		if s.priority(woken) >= s.priority(s.Load(tibPtr)) {
+			if err := s.switchTask(); err != nil {
+				return op, err
+			}
+		}
 	case 0xd1: // SPR @0x16ca：寫處理器暫存器，然後整份狀態從 TIB 重讀
 		v := s.pop()
 		n := int16(s.pop())
@@ -1209,7 +1225,14 @@ func (s *State) syncTIB() {
 	s.Store(s.TIB+0x0a, s.Local-8)
 	s.Store(s.TIB+0x0e, s.IPC)
 	s.Store(s.TIB+0x10, s.ERec)
-	s.Store(s.TIB+0x12, s.Proc&0xff|uint16(s.ProcHigh)<<8)
+	// 高位元組直接讀 `ss:0E6h`，不用 struct 裡那份。
+	// **那個位元組同時是 IORESULT**——存 task 狀態時原版存的就是它當下的值
+	// （@0x160F 的 `mov ch, ss:0E6h`），拿舊的會把裝置的結果吃掉。
+	high := uint16(0)
+	if int(0xe6) < len(s.Data) {
+		high = uint16(s.Data[0xe6])
+	}
+	s.Store(s.TIB+0x12, s.Proc&0xff|high<<8)
 }
 
 // restoreTIB 把整份執行狀態從目前 task 的 TIB 讀回來（助手 @0x1623）。
@@ -1241,6 +1264,76 @@ func (s *State) restoreTIB() error {
 	s.SP = s.Load(s.TIB + 0x08)
 	s.sync()
 	return nil
+}
+
+// 排程器用到的兩個位置。ready queue 的頭與「目前是哪個 task」。
+const (
+	readyQueue = 0x38
+	tibPtr     = 0x3c
+)
+
+// priority 是一個 TIB 的優先權。**是位元組不是 word**——@0x17C4 的 `mov al,[bx+2]`
+// 只取低位元組，高位元組是旗標。
+func (s *State) priority(tib uint16) uint8 {
+	if int(tib)+2 >= len(s.Data) {
+		return 0
+	}
+	return s.Data[tib+2]
+}
+
+// queueInsert 把 tib 依優先權插進一條 TIB 串列，回傳新的頭（助手 @0x16E9）。
+//
+// 走到第一個優先權**比它低**的前面停下來——同優先權排在後面，
+// 所以先等的先被叫到。
+func (s *State) queueInsert(head, tib uint16) uint16 {
+	var prev uint16
+	cur := head
+	for cur != 0 && s.priority(cur) >= s.priority(tib) {
+		prev, cur = cur, s.Load(cur)
+	}
+	s.Store(tib, cur)
+	if prev != 0 {
+		s.Store(prev, tib)
+		return head
+	}
+	return tib
+}
+
+// readyRemoveCurrent 把目前這個 task 從 ready queue 拿掉，回傳它的 TIB
+// （助手 @0x1722）。**跑著的那個一直在 ready queue 裡**，而且在最前面。
+func (s *State) readyRemoveCurrent() uint16 {
+	me := s.Load(tibPtr)
+	head := s.Load(readyQueue)
+	if head == me {
+		s.Store(readyQueue, s.Load(me))
+		return me
+	}
+	prev := head
+	for prev != 0 && s.Load(prev) != me {
+		prev = s.Load(prev)
+	}
+	if prev != 0 {
+		s.Store(prev, s.Load(me))
+	}
+	return me
+}
+
+// switchTask 換到 ready queue 最前面那個 task（@0x17E8）。
+//
+// 原版是**延到下一條指令的邊界才換**的：它把整張 dispatch 表填成同一個位址
+// （@0x18A6），讓下一條無論是什麼都落到 @0x17E8，換完再把表抄回來（@0x1892）。
+// 那個 `dec si` 就是為了把已經被 `lodsb` 取走的那個位元組還回去。
+//
+// 我們一條一條走，所以在這一條的結尾換就是同一件事——那時 IPC 已經指著下一條。
+func (s *State) switchTask() error {
+	s.syncTIB()
+	s.touch(s.SIB)
+	next := s.Load(readyQueue)
+	if next == 0 {
+		return &Fault{s.IPC, "ready queue 空了，沒有 task 可以跑"}
+	}
+	s.Store(tibPtr, next)
+	return s.restoreTIB()
 }
 
 // popSet 取一個堆疊上的集合：頂端是 word 數，底下依序是 word 0..N−1。
