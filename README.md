@@ -65,11 +65,38 @@ GOTOXY    25   63     2   Unit_Seg  M_Psuedo  IV  同    58    4  2   0
 
 最後那一行是這一輪最值得記的發現：**作業系統自己的 codefile 裡就混著兩種位元組序。**
 
-單元測試用的是合成的 codefile，不含任何原版資料。要拿真檔驗收：
+**原版跑得起來了**，可以當差分測試的 oracle。底下是
+[`dosgolem`](https://github.com/wicanr2/dosgolem)——同一個作者的無頭決定性
+DOS 執行器。`oracle/` 這一層認得 p-machine（怎麼定位直譯器、怎麼判斷
+dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
 
 ```
-PARHELION_CODEFILE=/path/to/SYSTEM.PASCAL go test ./internal/codefile/
+=== oracle：把原版跑起來
+--- PASS: TestBootReachesTheCommandLine (0.70s)
+--- PASS: TestLoaderMovesTheDispatchTableToOffsetZero
+      映像基底 01400h，dispatch 表 512／512 byte 相同
+--- PASS: TestImageIsMostlyIntact
+      映像 14094／16384 byte 與磁碟一致
 ```
+
+## 怎麼跑
+
+`tools/go.sh` 把 Go 包在 docker 裡，`tools/ci.sh` 是本機 CI。
+需要外部東西的檢查會跳過，**而且會說它跳過了**。
+
+```sh
+tools/ci.sh                                   # 只跑不需要素材的部分
+
+PARHELION_CODEFILE=/src/workplace/SYSTEM.PASCAL \
+PARHELION_ORIG=~/cht/p-code/psys21/"psystem 1984" \
+PARHELION_PME=/src/workplace/SYSTEM.PME.86 \
+PARHELION_DOSGOLEM=~/cht/dosgolem-psys \
+  tools/ci.sh                                 # 全部
+```
+
+單元測試用的是合成的 codefile，不含任何原版資料。原版素材（`.VOL`、
+`PSYSTEM.COM`、抽出來的 `SYSTEM.PME.86`）由使用者自備，缺檔就跳過——
+**不自製代用品**，安靜的替代品會讓「還沒驗」看起來像「驗過了」。
 
 ## 工具
 

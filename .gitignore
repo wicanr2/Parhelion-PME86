@@ -9,3 +9,8 @@ SYSTEM.*
 
 # Go
 /parhelion
+
+# Go workspace 只在容器裡成立
+/go.work
+/go.work.sum
+/workplace/

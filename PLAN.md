@@ -72,6 +72,16 @@ IRQ1 與埠 `60h`。跑起來之後：
   不必帶位移，而表項當成 `cs:offset` 剛好正確。
 - 順帶把 #3 縮小：檔頭那張位址表就在被蓋掉的範圍內，所以讀它的一定是載入器。
 
+這些量測**做成了會跑的測試**，不是一次性的觀察：`oracle/psys_test.go` 的
+`TestLoaderMovesTheDispatchTableToOffsetZero` 每次都重驗 512／512。
+`tools/ci.sh` 是本機 CI，需要素材的部分缺檔就跳過並且說明跳過了。
+
+分工定了：**dosgolem 只放任何 DOS 程式都用得到的能力**（`.COM` 載入器、
+`int 16h` 佇列、IRQ1 與埠 `60h`、讀文字畫面、用指紋在記憶體裡找映像），
+它另外開了一個 `package dosgolem` 當對外介面；**認得 p-machine 的知識全部在
+這個 repo 的 `oracle/`**。第一版把 p-System 專屬的東西寫進 dosgolem，
+與那邊正在拆分的 `oracle/rich2` 是同一個問題，已經改掉。
+
 沒通的：按鍵送進去之後，p-System 自己裝的 `int 09h`（`9CF0:01CA`）沒有讀埠 `60h`，
 系統仍停在環狀緩衝區的空轉迴圈。**p-code 軌跡因此還取不到，
 spec 01 也還升不上 `CONFORMED`。**
