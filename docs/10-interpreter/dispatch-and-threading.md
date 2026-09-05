@@ -1,5 +1,7 @@
 # 取指令與分派：一台沒有主迴圈的直譯器
 
+[English](dispatch-and-threading.en.md) ｜ [日本語](dispatch-and-threading.ja.md) ｜ **繁體中文**
+
 `SYSTEM.PME.86` 是 1984 年 DOS 版 UCSD p-system 的 p-machine 直譯器，16384 個位元組。
 它要做的事情很單純——取一個位元組、查表、跳過去、做完再取下一個。
 特別的是它**沒有一個叫做「主迴圈」的地方**。

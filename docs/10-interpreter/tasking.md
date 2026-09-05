@@ -1,5 +1,7 @@
 # 多工與換 task：三條串列與一招
 
+[English](tasking.en.md) ｜ [日本語](tasking.ja.md) ｜ **繁體中文**
+
 UCSD Pascal 有 `PROCESS`、`START`、`SEMAPHORE`——一台 1978 年的機器上就有
 真正的並行。這一篇看的是 8086 版怎麼做到的。
 

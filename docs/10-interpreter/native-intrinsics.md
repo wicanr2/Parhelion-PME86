@@ -1,5 +1,7 @@
 # 段 1 的內嵌原生程序：p-code 與機器碼的交界
 
+[English](native-intrinsics.en.md) ｜ [日本語](native-intrinsics.ja.md) ｜ **繁體中文**
+
 作業系統本體是 p-code 寫的，但它總得有辦法搬記憶體、碰磁碟、關中斷。
 IV.0 手冊 p.66 只說了一句：segment 1 的程序碼**可能**直接做在直譯器裡。
 這一篇把那句話拆開——**那是這台機器上「哪些事不是 p-code」的完整清單**。

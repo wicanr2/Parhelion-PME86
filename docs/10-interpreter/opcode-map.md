@@ -1,5 +1,7 @@
 # 256 格對照表：IV.0 官方助記符 × `SYSTEM.PME.86` dispatch 表
 
+[English](opcode-map.en.md) ｜ [日本語](opcode-map.ja.md) ｜ **繁體中文**
+
 表由 `tools/analyze-dispatch.py --table` 產生，來源是 `tools/routines-86.json`
 （`SYSTEM.PME.86`，sha256 `fe427aa6…`）與 `tools/iv0-opcodes.json`
 （SofTech《UCSD p-System IV.0 Internal Architecture Guide》Appendix VI.B）。

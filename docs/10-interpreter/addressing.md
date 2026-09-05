@@ -1,5 +1,7 @@
 # 定址：從 p-code 的 word 世界換到 8086 的位元組世界
 
+[English](addressing.en.md) ｜ [日本語](addressing.ja.md) ｜ **繁體中文**
+
 p-code 的位址單位是 word，變數編號從 1 開始。8086 的位址單位是位元組。
 這一篇看的是兩者之間那一層換算，以及活動記錄的實際版面。
 

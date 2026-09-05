@@ -1,5 +1,7 @@
 # 直譯器的狀態：四個暫存器加十幾個變數
 
+[English](machine-state.en.md) ｜ [日本語](machine-state.ja.md) ｜ **繁體中文**
+
 p-machine 是一台堆疊機，手冊 p.13 列的暫存器有 `SP`、`MP`、`BASE`、`IPC`、`SEG`、
 `JTAB`、`NP` 這幾個。8086 只有八個 16-bit 暫存器，而分派碼本身就吃掉兩個。
 這一篇看的是：**哪幾個 p-machine 暫存器值得常駐在 8086 暫存器裡，其餘的放哪裡。**

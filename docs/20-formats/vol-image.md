@@ -1,5 +1,7 @@
 # `.VOL` 磁碟映像：把檔案抽出來
 
+[English](vol-image.en.md) ｜ [日本語](vol-image.ja.md) ｜ **繁體中文**
+
 `psys21`（1984 年的 DOS hosted p-system）的三個磁碟以 `.VOL` 映像散布。
 `SYSTEM.PME.86` 就在第一片裡。格式在 IV.0 手冊 p.125 的 Figure 6，
 `tools/read-vol.py` 是那份版面的實作。
@@ -34,6 +36,15 @@ block 大小 512 個位元組，block 0–1 是 bootstrap，**目錄從 block 2 
 `dfkind` 低四位是檔案種類：0 untyped、1 xdsk、2 code、3 text、4 info、5 data、
 6 graf、7 foto、8 securedir。
 
+`daccess` 是打包的日期：低四位是月、接著五位是日、最高七位是西元後兩位的年。
+
+```
+daccess = month | day << 4 | year << 9
+```
+
+拿磁碟上的 `B429`、`AAE1`、`A94C` 三個值用這個式子解，得到 `2-Sep-90`、
+`14-Jan-85`、`20-Dec-84`，與 Filer 自己列出來的字串逐字相同。
+
 ## 跑起來
 
 ```
@@ -58,6 +69,6 @@ sha256 `fe427aa66ca8…`——本 repo 所有結論都建立在這個雜湊上�
 
 ## 邊界
 
-- `daccess` 與 status 位元沒有解，本 repo 也用不到。
+- status 位元沒有解，本 repo 也用不到。
 - 目錄佔四個 block 是照手冊寫的；沒有驗證過「檔案數超過 77 筆」的情形。
 - 本 repo **不含任何原版磁碟映像或可執行檔**，只保留位元組層級的結論與雜湊。
