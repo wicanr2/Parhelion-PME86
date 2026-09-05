@@ -88,7 +88,11 @@ func main() {
 
 func report(m *psystem.Machine) {
 	if len(m.Console) > 0 {
-		fmt.Printf("\n主控台收到 %d 個位元組：\n%s\n", len(m.Console), visible(m.Console))
+		fmt.Printf("\n畫面（%d×%d）：\n%s\n", m.Screen.W, m.Screen.H,
+			strings.Join(boxed(m.Screen.Lines()), "\n"))
+		if len(m.Screen.Unknown) > 0 {
+			fmt.Println("認不得的控制序列：", m.Screen.Unknown)
+		}
 	}
 	for _, l := range m.IOLog {
 		fmt.Println("  io:", l)
@@ -100,6 +104,15 @@ func report(m *psystem.Machine) {
 	for proc, n := range m.Traps {
 		fmt.Printf("  程序 %-3d ×%d\n", proc, n)
 	}
+}
+
+// boxed 把畫面每一列框起來，好看清楚哪裡是空白。
+func boxed(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = fmt.Sprintf("%2d |%s|", i, l)
+	}
+	return out
 }
 
 // visible 把控制字元換成看得見的寫法，好知道螢幕上到底出現了什麼。

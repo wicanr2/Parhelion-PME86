@@ -24,20 +24,26 @@ func TestBootReachesTheCommandLine(t *testing.T) {
 		t.Fatalf("走了 %d 條之後停在 %v，該是停在等鍵盤", m.Steps, err)
 	}
 
-	screen := string(m.Console)
+	raw := string(m.Console)
 	for _, want := range []string{
 		"Copyright 1979 U.C. Regents",
 		"Startup Utility",
 		"SYSTEM.PASCAL is on RAMDISK",
-		"Command: E(dit, R(un, F(ile",
-		"[IV.2.1 R3.3]",
 	} {
-		if !strings.Contains(screen, want) {
+		if !strings.Contains(raw, want) {
 			t.Errorf("主控台上沒有 %q", want)
 		}
 	}
+	// 畫面上該只剩命令列——Startup Utility 印完就把畫面清掉了。
+	if got := m.Screen.Lines()[0]; !strings.HasPrefix(got, "Command: E(dit, R(un, F(ile") ||
+		!strings.Contains(got, "[IV.2.1 R3.3]") {
+		t.Errorf("第 0 列是 %q", got)
+	}
+	if len(m.Screen.Unknown) > 0 {
+		t.Errorf("有認不得的控制序列：%v", m.Screen.Unknown)
+	}
 	if t.Failed() {
-		t.Logf("主控台收到 %d 個位元組：\n%s", len(m.Console), screen)
+		t.Logf("畫面：\n%s", m.Screen)
 	}
 }
 
@@ -68,20 +74,25 @@ func TestFilerListsTheRAMDisk(t *testing.T) {
 		t.Fatalf("打字之後停在 %v", err)
 	}
 
-	screen := string(m.Console)
-	for _, want := range []string{
-		"Filer: L(dir, R(em, C(hng",
-		"Dir listing of what vol ? RAMDISK:",
-		"SYSTEM.MISCINFO",
-		"SYSTEM.PASCAL",
-		"SYSTEM.FILER",
-		"5/5 files<listed/in-dir>",
+	// 畫面要長成 Filer 該有的樣子：標題、磁碟區名、兩欄檔案、統計。
+	lines := m.Screen.Lines()
+	for i, want := range map[int]string{
+		0: "Filer: L(dir, R(em, C(hng",
+		1: "RAMDISK:",
+		2: "SYSTEM.MISCINFO",
+		5: "5/5 files<listed/in-dir>",
 	} {
-		if !strings.Contains(screen, want) {
-			t.Errorf("主控台上沒有 %q", want)
+		if !strings.Contains(lines[i], want) {
+			t.Errorf("第 %d 列是 %q，該有 %q", i, lines[i], want)
 		}
 	}
+	if !strings.Contains(lines[2], "SYSTEM.PASCAL") {
+		t.Errorf("第 2 列沒有第二欄：%q", lines[2])
+	}
+	if len(m.Screen.Unknown) > 0 {
+		t.Errorf("有認不得的控制序列：%v", m.Screen.Unknown)
+	}
 	if t.Failed() {
-		t.Logf("主控台收到 %d 個位元組：\n%s", len(m.Console), screen)
+		t.Logf("畫面：\n%s", m.Screen)
 	}
 }

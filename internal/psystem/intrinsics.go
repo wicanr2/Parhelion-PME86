@@ -239,6 +239,7 @@ func (m *Machine) unitIO(read bool, at, sp uint16) error {
 			return nil
 		}
 		m.Console = append(m.Console, s.Data[buf:buf+n]...)
+		m.Screen.Write(s.Data[buf : buf+n])
 		return nil
 
 	default:

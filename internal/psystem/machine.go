@@ -15,15 +15,18 @@ const MemSize = 640 * 1024
 // 資料段裡幾個固定位置。偏移的來源是原版執行時量出來的版面
 // （docs/10-interpreter/machine-state.md 與 docs/30-remake/specs/03-boot.md）。
 const (
-	stateSysCom    = 0x0140             // 系統通訊區
-	stateTIB       = 0x0154             // 開機那個 task 的 TIB
-	stateBase      = 0x0170             // 最外層的 BASE：全域資料的框
-	dataSeg        = 0x04D1             // 資料段的 paragraph，沿用原版的值好逐條對照
-	codeBase       = 0xD800             // 開機那一段程式碼在資料段裡的位置
-	sysCom         = 0x00E6             // SYSCOM：單元表與 I/O 狀態
-	bootUnit       = 14                 // 開機磁碟的 unit 編號
-	ramDiskUnit    = 13                 // 記憶體磁碟
-	ramDiskBlocks  = 750                // 量原版量到的大小
+	stateSysCom   = 0x0140 // 系統通訊區
+	stateTIB      = 0x0154 // 開機那個 task 的 TIB
+	stateBase     = 0x0170 // 最外層的 BASE：全域資料的框
+	dataSeg       = 0x04D1 // 資料段的 paragraph，沿用原版的值好逐條對照
+	codeBase      = 0xD800 // 開機那一段程式碼在資料段裡的位置
+	sysCom        = 0x00E6 // SYSCOM：單元表與 I/O 狀態
+	bootUnit      = 14     // 開機磁碟的 unit 編號
+	ramDiskUnit   = 13     // 記憶體磁碟
+	ramDiskBlocks = 750    // 量原版量到的大小
+	// 畫面大小寫在 SYSTEM.MISCINFO 裡（0x4A 是高、0x4C 是寬）。
+	screenWidth    = 80
+	screenHeight   = 25
 	stackTop       = 0xFFFE             // 資料段的上緣，也是 TIB 記的堆疊上界
 	dirBase        = stackTop - 4*Block // 磁碟目錄：4 塊
 	dictBase       = dirBase - Block    // 作業系統 codefile 的 segment dictionary：1 塊
@@ -56,9 +59,10 @@ type Machine struct {
 	// 出錯的地方與看到症狀的地方通常隔了幾千條指令。
 	IOLog []string
 
-	Faults  int    // 發生過幾次 segment fault
-	Console []byte // 寫到主控台的位元組
-	Keys    []byte // 還沒被讀走的鍵盤輸入
+	Faults  int     // 發生過幾次 segment fault
+	Console []byte  // 寫到主控台的原始位元組
+	Screen  *Screen // 同一份位元組渲染出來的畫面
+	Keys    []byte  // 還沒被讀走的鍵盤輸入
 }
 
 // Word 讀資料段裡的一個 word。診斷用。
@@ -138,6 +142,7 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 		Units: map[uint16]*Volume{bootUnit: v},
 		Clock: opt.Clock,
 	}
+	m.Screen = NewScreen(screenWidth, screenHeight)
 	data := m.Mem[dataSeg*16 : dataSeg*16+0x10000]
 	m.S = &pmachine.State{Data: data, Env: m}
 
