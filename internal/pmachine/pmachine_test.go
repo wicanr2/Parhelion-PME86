@@ -9,6 +9,11 @@ import (
 // 這一份測試不需要原版素材：程式碼是手寫的 p-code，狀態自己擺。
 // 真正的判準是 oracle 那邊的逐條對拍——這裡釘的是「改壞了會立刻知道」的地方。
 
+// putWord 是測試裡擺 p-code 常數用的小工具。
+func putWord(b []byte, off int, v uint16) {
+	binary.LittleEndian.PutUint16(b[off:], v)
+}
+
 // newState 造一台機器：Code 是給的 p-code，Data 是 4 KB，堆疊從頂端往下長。
 func newState(code ...byte) *State {
 	s := &State{

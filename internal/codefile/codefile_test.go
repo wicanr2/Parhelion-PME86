@@ -218,3 +218,62 @@ func TestParseErrors(t *testing.T) {
 		t.Error("太短的檔案應該回錯誤")
 	}
 }
+
+func TestFlippedSegmentDecodesRoutineHeadersToo(t *testing.T) {
+	// byte sex 相反的段，表頭與 routine dictionary 都要翻。
+	// 只翻表頭的症狀是「段解得開但每一支常式的 DATASIZE 都是垃圾」——
+	// 而垃圾值不會報錯，只會讓後面配置的區域資料大小整個錯。
+	cf, err := Parse(fixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := cf.Segments[1]
+	if !f.Flipped {
+		t.Fatal("測資裡的第二段該是反 byte sex")
+	}
+	r := f.Routines[0]
+	if r.HeaderWord != 12 || r.CodeWord != 13 || r.DataSize != 300 || r.ExitIC != 60 {
+		t.Errorf("反 byte sex 的常式解出 %+v", r)
+	}
+	// 同一份位元組用主機的順序讀會得到完全不同的值——這一條確認測資本身
+	// 真的是反的，不是碰巧兩種讀法一樣。
+	raw := f.Raw()
+	if native := binary.LittleEndian.Uint16(raw[12*2:]); native == 300 {
+		t.Error("測資的 DATASIZE 兩種位元組序讀起來一樣，測不出東西")
+	}
+}
+
+func TestSegmentWordRefusesToReadPastTheEnd(t *testing.T) {
+	// 越界回 0 的話，「字典項指到段外」會變成「字典項是 0」，
+	// 也就是把壞掉的檔案看成「這一支沒有碼」。
+	cf, err := Parse(fixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cf.Segments[0]
+	if _, err := s.Word(s.Words); err == nil {
+		t.Error("讀段尾之後一個 word 卻成功了")
+	}
+	if _, err := s.Word(s.Words - 1); err != nil {
+		t.Errorf("讀最後一個 word 卻失敗：%v", err)
+	}
+}
+
+func TestNativeRoutineDoesNotReadExitIC(t *testing.T) {
+	// DATASIZE 為負表示原生碼，這時 EXITIC 未定義。
+	// 照樣去讀的話會拿到一個看起來合法的位址，而那個位址指向別的東西。
+	cf, err := Parse(fixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := cf.Segments[0].Routines[2]
+	if !n.Native {
+		t.Fatal("測資的第三支該是原生碼")
+	}
+	if n.ExitIC != 0 {
+		t.Errorf("原生碼的 EXITIC 讀出 %04X，該保持未讀的 0", n.ExitIC)
+	}
+	if n.DataSize != 7 {
+		t.Errorf("one's complement 解出 %d，該是 7", n.DataSize)
+	}
+}

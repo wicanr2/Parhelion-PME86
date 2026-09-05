@@ -141,3 +141,71 @@ func TestTraceNeedsPMELocated(t *testing.T) {
 		t.Fatal("還沒定位 PME 卻讓 Trace 成功了")
 	}
 }
+
+// TestCaptureMatchesTheInterpretersOwnState 釘住「抄狀態」這一步。
+//
+// Capture 從原版抄六個基底給 Go 版當起點。抄錯一個不會報錯——
+// 對拍會在幾條之後開始對不上，而症狀看起來像某條指令實作錯了。
+func TestCaptureMatchesTheInterpretersOwnState(t *testing.T) {
+	s := bootToPME(t)
+	if _, err := s.Trace(1, 200_000); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Capture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := s.Regs()
+
+	for _, c := range []struct {
+		name      string
+		want, got uint16
+	}{
+		{"IPC（回退到 opcode 本身）", live.SI - 1, got.IPC},
+		{"SP", live.SP, got.SP},
+		{"區域基底", live.BX, got.Local},
+		{"全域基底", live.DX, got.Global},
+		{"常數池", live.ConstPool, got.ConstPool},
+		{"程序字典", live.ProcDict, got.ProcDict},
+		{"MSPROC", live.Proc, got.Proc},
+		{"E_Rec", live.ERec, got.ERec},
+	} {
+		if c.want != c.got {
+			t.Errorf("%s：原版 %04X，抄成 %04X", c.name, c.want, c.got)
+		}
+	}
+	// 程式碼要抄的是 ds 指的那一段，資料是 ss——兩個抄反了會安靜地跑很久。
+	if want := s.CodeSegment(live.DS, 64); string(got.Code[:64]) != string(want) {
+		t.Error("抄到的程式碼不是 ds 指的那一段")
+	}
+	if got.Env == nil {
+		t.Error("沒有接上 Environment，跨段呼叫會做不了")
+	}
+}
+
+// TestTraceIsDeterministic 釘住 oracle 的根本前提：同一份輸入永遠一樣。
+//
+// 不成立的話對拍會時好時壞，而看起來像被觀測的程式有問題。
+func TestTraceIsDeterministic(t *testing.T) {
+	const n = 300
+	var runs [2][]string
+	for i := range runs {
+		s := bootToPME(t)
+		rows, err := s.Trace(n, 5_000_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != n {
+			t.Fatalf("第 %d 次只追到 %d 條", i+1, len(rows))
+		}
+		for _, r := range rows {
+			runs[i] = append(runs[i], r.String())
+		}
+	}
+	for i := range runs[0] {
+		if runs[0][i] != runs[1][i] {
+			t.Fatalf("第 %d 條不同：\n  %s\n  %s", i, runs[0][i], runs[1][i])
+		}
+	}
+	t.Logf("兩次開機的前 %d 條 p-code 完全相同", n)
+}
