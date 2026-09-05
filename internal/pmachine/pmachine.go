@@ -1016,9 +1016,6 @@ func (s *State) sync() {
 	} else {
 		s.Store(0x44, 1)
 	}
-	if int(0xe6) < len(s.Data) {
-		s.Data[0xe6] = s.ProcHigh
-	}
 }
 
 // touch 記一次「這一段剛被用過」（助手 @0x10F5）。
@@ -1226,6 +1223,11 @@ func (s *State) restoreTIB() error {
 	}
 	w := s.Load(s.TIB + 0x12)
 	s.Proc, s.ProcHigh = w&0xff, uint8(w>>8)
+	// @0x1636：換 task 時把程序號的高位元組寫進 ss:0E6h。
+	// **只有這裡寫**——那個位元組同時是 IORESULT 的低位，每次呼叫都寫會把它蓋掉。
+	if int(0xe6) < len(s.Data) {
+		s.Data[0xe6] = s.ProcHigh
+	}
 	if s.Env == nil {
 		return &Fault{s.IPC, "沒有 Environment，換不了 task 的段"}
 	}

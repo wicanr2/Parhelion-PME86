@@ -14,12 +14,17 @@ const MemSize = 640 * 1024
 // 資料段裡幾個固定位置。偏移的來源是原版執行時量出來的版面
 // （docs/10-interpreter/machine-state.md 與 docs/30-remake/specs/03-boot.md）。
 const (
-	stateSysCom = 0x0140 // 系統通訊區
-	stateTIB    = 0x0154 // 開機那個 task 的 TIB
-	stateBase   = 0x0170 // 最外層的 BASE：全域資料的框
-	dataSeg     = 0x04D1 // 資料段的 paragraph，沿用原版的值好逐條對照
-	codeBase    = 0xD800 // 開機那一段程式碼在資料段裡的位置
-	sysCom      = 0x00E6 // SYSCOM：單元表與 I/O 狀態
+	stateSysCom = 0x0140             // 系統通訊區
+	stateTIB    = 0x0154             // 開機那個 task 的 TIB
+	stateBase   = 0x0170             // 最外層的 BASE：全域資料的框
+	dataSeg     = 0x04D1             // 資料段的 paragraph，沿用原版的值好逐條對照
+	codeBase    = 0xD800             // 開機那一段程式碼在資料段裡的位置
+	sysCom      = 0x00E6             // SYSCOM：單元表與 I/O 狀態
+	bootUnit    = 14                 // 開機磁碟的 unit 編號
+	stackTop    = 0xFFFE             // 資料段的上緣，也是 TIB 記的堆疊上界
+	dirBase     = stackTop - 4*Block // 磁碟目錄：4 塊
+	dictBase    = dirBase - Block    // 作業系統 codefile 的 segment dictionary：1 塊
+	dirLastBoot = 0x14               // 目錄第 0 筆裡「最後一次開機」的日期
 )
 
 // Machine 是一台自己跑得起來的 p-System：平坦記憶體 ＋ p-machine ＋ 磁碟。
@@ -29,9 +34,15 @@ type Machine struct {
 	Vol  *Volume
 	Boot *codefile.Segment // 開機載入的那一段
 
-	Steps   uint64 // 走過幾條 p-code
-	Traps   map[uint16]int
-	stopped error
+	Steps uint64 // 走過幾條 p-code
+	Traps map[uint16]int
+
+	// Units 是 unit 編號對磁碟。開機磁碟是 14——那是這台 DOS 主機的分配，
+	// 由原版實際發出的 UNITREAD 量到的，不是手冊規定的。
+	Units map[uint16]*Volume
+
+	Console []byte // 寫到主控台的位元組
+	Keys    []byte // 還沒被讀走的鍵盤輸入
 }
 
 // word／setWord 讀寫資料段裡的一個 word。
@@ -43,12 +54,30 @@ func (m *Machine) setWord(off, v uint16) {
 	binary.LittleEndian.PutUint16(m.S.Data[off:], v)
 }
 
-// Boot 從一份 .VOL 映像開機。
+// Options 是開機時可以換掉的東西。
+type Options struct {
+	// Date 是開機日期，UCSD 的打包格式：月 4 位、日 5 位、年 7 位。
+	// bootstrap 會把它蓋進**記憶體裡那份目錄**的第 0 筆 +14h，
+	// 磁碟上那份不動。作業系統之後就拿它當「這次開機的日期」。
+	Date uint16
+}
+
+// PackDate 把年月日打包成 UCSD 的日期 word。年是西元後兩位。
+func PackDate(year, month, day int) uint16 {
+	return uint16(month&0xF) | uint16(day&0x1F)<<4 | uint16(year&0x7F)<<9
+}
+
+// Boot 從一份 .VOL 映像開機，日期用預設值。
+func Boot(volume []byte, osFile string) (*Machine, error) {
+	return BootWith(volume, osFile, Options{Date: PackDate(85, 1, 1)})
+}
+
+// BootWith 從一份 .VOL 映像開機。
 //
 // 原版的 bootstrap 做的事，這裡照著做一次：把作業系統的起始段從磁碟載進來、
 // 在它底下擺好 SIB／E_Rec／E_Vec／第一個活動記錄、填好直譯器的狀態區，
 // 然後從那一段的程序 1 開始跑。**做完就不需要原版了。**
-func Boot(volume []byte, osFile string) (*Machine, error) {
+func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	v, err := OpenVolume(volume)
 	if err != nil {
 		return nil, err
@@ -74,7 +103,11 @@ func Boot(volume []byte, osFile string) (*Machine, error) {
 		return nil, fmt.Errorf("psystem: %s 裡一段都沒有", osFile)
 	}
 
-	m := &Machine{Mem: make([]byte, MemSize), Vol: v, Boot: boot, Traps: map[uint16]int{}}
+	m := &Machine{
+		Mem: make([]byte, MemSize), Vol: v, Boot: boot,
+		Traps: map[uint16]int{},
+		Units: map[uint16]*Volume{bootUnit: v},
+	}
 	data := m.Mem[dataSeg*16 : dataSeg*16+0x10000]
 	m.S = &pmachine.State{Data: data, Env: m}
 
@@ -121,10 +154,25 @@ func Boot(volume []byte, osFile string) (*Machine, error) {
 	m.setWord(stateTIB+0x0a, mp)
 	m.setWord(stateTIB+0x10, erec)
 	m.setWord(stateTIB+0x12, 1)
+	// +18／+1A 也是量到的：一個小整數與指回 BASE 的指標，用途還沒解。
+	m.setWord(stateTIB+0x18, 3)
+	m.setWord(stateTIB+0x1a, stateBase)
 	m.setWord(0x38, stateTIB)
 	m.setWord(0x3c, stateTIB)
 	for off, v := range bootWords {
 		m.setWord(off, v)
+	}
+	// 開機磁碟的目錄先讀進來，擺在資料段最上面（`0xFFFE` 往下 2048 個位元組），
+	// SYSCOM+8 指著它。作業系統一開始就在讀 `dnumfiles`。
+	if dir := v.Blocks(2, 4); dir != nil {
+		copy(data[dirBase:], dir)
+		m.setWord(sysCom+8, dirBase)
+		m.setWord(dirBase+dirLastBoot, opt.Date)
+	}
+	// 作業系統 codefile 的 segment dictionary 原封不動搬一塊進來，
+	// 就放在目錄下面一塊。要載別的段時，(Code_Addr, Code_Leng) 就從這裡查。
+	if len(raw) >= codefile.BlockSize {
+		copy(data[dictBase:], raw[:codefile.BlockSize])
 	}
 	m.setWord(stateSysCom+0x10, dataSeg*16) // 資料段的實體位址
 	// 全域變數 1 指向 SYSCOM（系統通訊區）。作業系統一開口就要它。
@@ -144,7 +192,8 @@ func Boot(volume []byte, osFile string) (*Machine, error) {
 	m.S.Local = mp + 8
 	m.S.Proc = 1
 	m.S.IPC = entry
-	m.setWord(mp+4, entry) // MSIPC：外層程式返回時回到自己
+	m.setWord(mp+4, entry)        // MSIPC：外層程式返回時回到自己
+	m.setWord(stateBase+4, entry) // 全域框記的也是同一個位址
 	m.setWord(stateTIB+0x0e, entry)
 	m.S.Enter(seg)
 	return m, nil

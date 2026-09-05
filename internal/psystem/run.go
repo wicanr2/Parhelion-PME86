@@ -20,6 +20,19 @@ func (t *Trap) Error() string {
 	return fmt.Sprintf("psystem: %04Xh 的段 1 程序 %d（%s）還沒做", t.IPC, t.Proc, t.Why)
 }
 
+// IOError 是作業系統自己檢查出來的 I/O 錯誤（`IOCHECK`，@0x2B0D）。
+//
+// **與「我們做不出來」是兩件事**：這表示宿主的裝置層回了一個錯誤碼，
+// 而作業系統照它自己的規則決定停下來。
+type IOError struct {
+	Result uint16
+	IPC    uint16
+}
+
+func (e *IOError) Error() string {
+	return fmt.Sprintf("psystem: %04Xh 的 IOCHECK 發現 IORESULT ＝ %d", e.IPC, e.Result)
+}
+
 // Step 走一條 p-code；碰到宿主該做的事就當場做掉，做完算同一步。
 func (m *Machine) Step() error {
 	_, err := m.S.Step()

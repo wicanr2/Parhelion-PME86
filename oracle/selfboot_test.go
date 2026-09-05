@@ -22,8 +22,8 @@ const (
 	//
 	// 下限釘住的是**開機狀態不能建錯**。走不完不是這個測試的失敗——
 	// 那表示 bootstrap 還有沒重建出來的東西，而那是下一輪的工作。
-	selfBootWant  = 2000
-	selfBootFloor = 30
+	selfBootWant  = 300_000
+	selfBootFloor = 33_000
 )
 
 func TestSelfBootMatchesTheOriginal(t *testing.T) {
@@ -31,7 +31,9 @@ func TestSelfBootMatchesTheOriginal(t *testing.T) {
 	if err != nil {
 		t.Skip("讀不到 PSYSTEM.VOL：", err)
 	}
-	m, err := psystem.Boot(img, "SYSTEM.PASCAL")
+	// 開機日期要與 oracle 那台機器的時鐘一致，不然目錄裡那個 word 會不同——
+	// 那不是實作的差異，是**兩台機器的今天不一樣**。
+	m, err := psystem.BootWith(img, "SYSTEM.PASCAL", psystem.Options{Date: 0xBA11})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +53,7 @@ func TestSelfBootMatchesTheOriginal(t *testing.T) {
 		if int(m.S.IPC) < len(m.S.Code) {
 			op = m.S.Code[m.S.IPC]
 		}
-		at := m.S.IPC
+		at, tosIn, spIn := m.S.IPC, m.S.TOS(), m.S.SP
 		if err := m.Step(); err != nil {
 			t.Logf("走了 %d 條之後停在 %04Xh：%v", steps, at, err)
 			break
@@ -78,6 +80,15 @@ func TestSelfBootMatchesTheOriginal(t *testing.T) {
 		}
 		if bad != "" {
 			t.Log(bad)
+			t.Logf("  進這一條時 sp=%04X tos=%04X", spIn, tosIn)
+			if more, err := s.Trace(5, traceBudget); err == nil {
+				for _, r := range more {
+					t.Log("  原版接下來：", r)
+				}
+			}
+			for _, d := range s.DataDiff(m.S, 8) {
+				t.Log("  資料段不同：", d)
+			}
 			break
 		}
 		steps++

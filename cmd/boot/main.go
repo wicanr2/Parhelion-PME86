@@ -57,6 +57,9 @@ func main() {
 }
 
 func report(m *psystem.Machine) {
+	if len(m.Console) > 0 {
+		fmt.Printf("\n主控台收到 %d 個位元組：\n%s\n", len(m.Console), visible(m.Console))
+	}
 	if len(m.Traps) == 0 {
 		return
 	}
@@ -64,6 +67,24 @@ func report(m *psystem.Machine) {
 	for proc, n := range m.Traps {
 		fmt.Printf("  程序 %-3d ×%d\n", proc, n)
 	}
+}
+
+// visible 把控制字元換成看得見的寫法，好知道螢幕上到底出現了什麼。
+func visible(b []byte) string {
+	var out []rune
+	for _, c := range b {
+		switch {
+		case c == 0x1b:
+			out = append(out, []rune("<ESC>")...)
+		case c == '\r':
+			out = append(out, '\n')
+		case c < 0x20 || c > 0x7e:
+			out = append(out, []rune(fmt.Sprintf("<%02X>", c))...)
+		default:
+			out = append(out, rune(c))
+		}
+	}
+	return string(out)
 }
 
 func die(err error) {
