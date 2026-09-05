@@ -469,3 +469,96 @@ func (s *System) MemDiff(mem []byte, from, to uint32, max int) []string {
 func (s *System) PoolBase() uint32 {
 	return (uint32(s.M.CPU.Seg[dosgolem.SS]) + 0x1000) * 16
 }
+
+// Exercise 讓原版執行一條**我們指定**的 p-code，堆疊也由我們擺。
+//
+// 對拍走的是作業系統開機那條路，走不到的指令（浮點、集合比較、除法……）
+// 就永遠沒有證據。這一支把那個洞補起來：把指令位元組寫進原版的程式碼段、
+// 把運算元擺上它的堆疊，然後兩邊各走一條、逐 word 比結果。
+//
+// 手法上有一個關卡：軌跡停下來的那一刻，**下一條的 opcode 已經被 `lodsb`
+// 取走了**，來不及換。所以寫進去的是「再下一條」，並且在自己的指令後面
+// 補一個 `NOP`——這樣每一輪結束時待執行的都是 `NOP`，位置就永遠控制得住。
+//
+// 回傳原版執行後堆疊頂的 want 個 word，以及我們這邊的同樣幾個。
+func (s *System) Exercise(code []byte, stack []uint16, want int) (theirs, ours []uint16, err error) {
+	if s.targets == nil {
+		return nil, nil, fmt.Errorf("oracle: 還沒定位 PME")
+	}
+	const nop = 0x9C
+	c := s.M.CPU
+	codeSeg, dataSeg := c.Seg[dosgolem.DS], c.Seg[dosgolem.SS]
+
+	// 把指令種進接下來會被取到的位置。第一輪的待執行指令是真的作業系統碼，
+	// 它可能是跳躍，那就再種一次。
+	var at uint16
+	for tries := 0; ; tries++ {
+		at = c.R[dosgolem.SI]
+		base := uint32(codeSeg)*16 + uint32(at)
+		s.M.WriteBytes(base, code)
+		s.M.Write8(base+uint32(len(code)), nop)
+		if _, err := s.Trace(1, 200_000); err != nil {
+			return nil, nil, err
+		}
+		if c.R[dosgolem.SI] == at+1 {
+			break // 取到我們種的那一個了
+		}
+		if tries == 8 {
+			return nil, nil, fmt.Errorf("oracle: 種不進去，第 %d 次還是落在 %04X", tries, c.R[dosgolem.SI])
+		}
+	}
+
+	// 現在待執行的就是我們的指令，而且機器停在兩條指令之間——擺堆疊很安全。
+	sp := uint16(0xD000)
+	for i, v := range stack {
+		s.M.Write16(uint32(dataSeg)*16+uint32(sp)+uint32(2*i), v)
+	}
+	c.R[dosgolem.SP] = sp
+
+	// 抄一份給我們自己跑。Capture 讀的是原版此刻的樣子，
+	// 所以指令與堆疊兩邊完全一樣——差別只會來自實作。
+	mine, err := s.Capture()
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := mine.Step(); err != nil {
+		return nil, nil, fmt.Errorf("我們這邊走不動：%w", err)
+	}
+	rows, err := s.Trace(1, 200_000)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, fmt.Errorf("oracle: 原版沒有走完這一條")
+	}
+
+	theirs = make([]uint16, want)
+	ours = make([]uint16, want)
+	for i := 0; i < want; i++ {
+		theirs[i] = s.M.Read16(uint32(dataSeg)*16 + uint32(rows[0].SP) + uint32(2*i))
+		ours[i] = mine.Load(mine.SP + uint16(2*i))
+	}
+	if rows[0].SP != mine.SP {
+		return theirs, ours, fmt.Errorf("SP 對不上：原版 %04X，我們 %04X", rows[0].SP, mine.SP)
+	}
+	if want := at + uint16(len(code)); rows[0].IPC != want || mine.IPC != want {
+		return theirs, ours, fmt.Errorf("IPC 對不上：該是 %04X，原版 %04X，我們 %04X",
+			want, rows[0].IPC, mine.IPC)
+	}
+	return theirs, ours, nil
+}
+
+// PatchCode 往原版目前的程式碼段寫幾個 word。
+//
+// 給 Exercise 用：有些指令的運算元指向常數池（例如 `LDCRL`），
+// 要驗它就得先把常數擺進去。**會蓋掉原本的內容**，
+// 所以只在最後幾個案例用，不要跟依賴那一段的測試混在一起。
+func (s *System) PatchCode(off uint16, words []uint16) {
+	base := uint32(s.M.CPU.Seg[dosgolem.DS])*16 + uint32(off)
+	for i, v := range words {
+		s.M.Write16(base+uint32(2*i), v)
+	}
+}
+
+// ConstPool 是原版目前那一段的常數池位移（`ss:42h`）。
+func (s *System) ConstPool() uint16 { return s.DataWord(0x42) }
