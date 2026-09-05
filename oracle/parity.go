@@ -433,3 +433,37 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// MemDiff 把我們的實體記憶體與原版的逐位元組比，回報前 max 段不同的地方。
+//
+// **資料段以外的東西只有這裡看得到。** Codepool 在資料段上面，
+// 段載入、byte sex 翻轉、relocation 全部寫在那裡；只比資料段的話，
+// 那些寫錯了要等到那一段被執行才會以完全不同的樣子出現。
+func (s *System) MemDiff(mem []byte, from, to uint32, max int) []string {
+	if int(to) > len(mem) {
+		to = uint32(len(mem))
+	}
+	if int(to) > len(s.M.Mem) {
+		to = uint32(len(s.M.Mem))
+	}
+	var out []string
+	for i := from; i < to && len(out) < max; i++ {
+		if s.M.Mem[i] == mem[i] {
+			continue
+		}
+		j := i
+		for j < to && s.M.Mem[j] != mem[j] {
+			j++
+		}
+		n := j - i
+		out = append(out, fmt.Sprintf("%05X–%05X（%d byte）原版 % X 我們 % X",
+			i, j-1, n, s.M.Mem[i:min(int(j), int(i)+8)], mem[i:min(int(j), int(i)+8)]))
+		i = j
+	}
+	return out
+}
+
+// PoolBase 是 codepool 的實體位址：直譯器資料段的上面一段。
+func (s *System) PoolBase() uint32 {
+	return (uint32(s.M.CPU.Seg[dosgolem.SS]) + 0x1000) * 16
+}

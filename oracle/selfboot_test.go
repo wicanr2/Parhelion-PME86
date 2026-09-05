@@ -81,8 +81,16 @@ func TestSelfBootMatchesTheOriginal(t *testing.T) {
 		if bad != "" {
 			t.Log(bad)
 			t.Logf("  進這一條時 sp=%04X tos=%04X", spIn, tosIn)
-			for _, d := range s.DataDiff(m.S, 20) {
+			for _, d := range s.DataDiff(m.S, 40) {
 				t.Log("  資料段不同：", d)
+			}
+			pool := s.PoolBase()
+			if d := s.MemDiff(m.Mem, pool, pool+0x20000, 10); len(d) > 0 {
+				for _, l := range d {
+					t.Log("  codepool 不同：", l)
+				}
+			} else {
+				t.Log("  codepool 逐位元組相同")
 			}
 			if more, err := s.Trace(5, traceBudget); err == nil {
 				for _, r := range more {
@@ -101,3 +109,40 @@ func TestSelfBootMatchesTheOriginal(t *testing.T) {
 	}
 	t.Logf("自己開機走了 %d 條 p-code，與原版逐條相同", steps)
 }
+
+// 開機那一刻的資料段，我們建出來的與 bootstrap 建出來的差在哪。
+//
+// **這是自舉的清單。** 差一格就是「bootstrap 做了一件我們還沒做的事」，
+// 逐條走 p-code 只會在很後面才以別的樣子浮現。
+func TestSelfBootInitialStateDiff(t *testing.T) {
+	img, err := os.ReadFile(filepath.Join("/orig", "PSYSTEM.VOL"))
+	if err != nil {
+		t.Skip("讀不到 PSYSTEM.VOL：", err)
+	}
+	m, err := psystem.BootWith(img, "SYSTEM.PASCAL", psystem.Options{Date: 0xBA11})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := bootToPME(t)
+	if _, err := s.Trace(1, traceBudget); err != nil {
+		t.Fatal(err)
+	}
+
+	diff := s.DataDiff(m.S, 4000)
+	for i, d := range diff {
+		if i >= 30 {
+			t.Logf("  …還有 %d 段", len(diff)-i)
+			break
+		}
+		t.Log("  ", d)
+	}
+	t.Logf("開機那一刻資料段有 %d 段不同", len(diff))
+	if len(diff) > initialDiffCeiling {
+		t.Fatalf("不同的段數 %d 超過上限 %d——bootstrap 又多做了什麼沒補上",
+			len(diff), initialDiffCeiling)
+	}
+}
+
+// initialDiffCeiling 是「還沒重建出來的 bootstrap 動作」還剩幾段。
+// **只准往下**：補一項就把它調低，才看得出進度。
+const initialDiffCeiling = 1982

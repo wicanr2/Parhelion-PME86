@@ -89,7 +89,9 @@ func (m *Machine) intrinsic(proc uint16) error {
 		return m.loadSegment()
 
 	case 34, 44: // 等裝置做完 @0x2C36：模式碼 4，只吃一個 unit
-		m.setWord(ioResult, m.unitStatus(s.Pop()))
+		u := s.Pop()
+		m.setWord(ioResult, m.unitStatus(u))
+		m.logIO("等 unit %d → IORESULT %d", u, m.word(ioResult))
 
 	case 20: // TIME(var hi, lo) @0x2CB8：系統時鐘，單位是 1／60 秒
 		lo := s.Pop()
@@ -237,13 +239,26 @@ func (m *Machine) logIO(format string, a ...any) {
 // **沒掛磁碟不是「錯的 unit 編號」。** 作業系統開機時會一個一個問過去，
 // 得到 9（沒有這片磁碟）是正常結果，得到 0 會讓它以為那台有東西。
 func (m *Machine) unitStatus(unit uint16) uint16 {
-	switch {
-	case unit == 1 || unit == 2:
-		return 0
-	case m.Units[unit] != nil:
+	if m.Units[unit] != nil {
 		return 0
 	}
+	if r, ok := deviceStatus[unit]; ok {
+		return r
+	}
 	return ioNoVolume
+}
+
+// deviceStatus 是這台機器上除了磁碟之外還有哪些裝置在。
+//
+// **量原版量出來的**：作業系統開機時會把 unit 2 到 22 問過一遍，
+// 答案不是「有」就是「沒有」——只有 unit 3 回的是 3（不支援這種請求），
+// 那是它與「沒有這片磁碟」的差別。unit 128 是這台 DOS 主機自己的檔案系統閘道。
+var deviceStatus = map[uint16]uint16{
+	1: 0, 2: 0, // CONSOLE:／SYSTERM:
+	3:   ioBadRequest,
+	4:   0,
+	13:  0,
+	128: 0,
 }
 
 // IORESULT 與幾個用得到的碼（手冊 p.117 的 I/O 錯誤表）。

@@ -80,7 +80,13 @@ F5FE  作業系統 codefile 的 segment dictionary，1 塊
 段 dictionary 那一塊是原封不動搬進來的 512 個位元組，
 內容就是 `(Code_Addr, Code_Leng)` 一對一對排下去，順序與 dictionary 相同。
 
-## 3. 還沒解出來的
+### 目錄有兩份
+
+一份在資料段最上面（`0xF7FE`），`SYSCOM+8` 指著它；另一份在 `0x3AF0`，
+作業系統自己用。**兩份都要蓋上開機日期。**
+第二份的位置是量到的，怎麼算出來的還沒解。
+
+## 3. 還沒解出來的：bootstrap 本身
 
 **bootstrap 在資料段低位址處留下的初值**，目前是照著原版量到的值填的
 （`internal/psystem/machine.go` 的 `bootWords`）。分三塊：
@@ -93,7 +99,19 @@ F5FE  作業系統 codefile 的 segment dictionary，1 塊
 | TIB `+4`／`+6`／`+18h`／`+1Ah` | 堆疊上下界與兩個還沒解的值 | 怎麼算出來的還沒解 |
 
 **這些是量到的常數，不是解出來的規則**——照抄能跑，但不算把 bootstrap 解開了。
-要真的解開得反組譯 `PSYSTEM.COM` 自己的啟動碼。
+
+而且不只這些。把「開機那一刻的資料段」整個比一次
+（`TestSelfBootInitialStateDiff`），**還有 1,982 段不同**：
+裡面有裝置驅動的名字（`DOSVV.`、`SERPAR`、`BRIDGE`）、每個 unit 的磁碟區記錄、
+一張每 4 個位元組一格的表。那是 `PSYSTEM.COM` 自己建的一整套主機組態。
+
+**所以剩下的工作不是再猜幾個 word，是把 `PSYSTEM.COM` 的啟動碼反組譯出來。**
+那份差異表就是清單，補一項就把 `initialDiffCeiling` 調低一格，
+數字只准往下——這樣才看得出進度，而不是憑感覺。
+
+一個反直覺的事實：**缺這 1,982 段，前 40,619 條 p-code 還是逐條相同。**
+作業系統要走到很後面才會去讀它們。所以「跑得動」不等於「建對了」，
+兩個指標要分開看。
 
 ## 4. 段 1 的原生程序
 
@@ -163,6 +181,15 @@ F5FE  作業系統 codefile 的 segment dictionary，1 塊
 
 ## 5. 驗收
 
+兩個指標，分開看：
+
+| 測試 | 釘什麼 | 現在 |
+|---|---|---|
+| `TestSelfBootMatchesTheOriginal` | 跑出來的 p-code 一不一樣 | 40,619 條逐條相同 |
+| `TestSelfBootInitialStateDiff` | 開機那一刻的狀態建對了沒 | 還有 1,982 段沒建 |
+
+第一個是下限（只准往上），第二個是上限（只准往下）。
+
 `TestSelfBootMatchesTheOriginal`：自己開機，逐條與原版比 IPC、SP、TOS、E_Rec。
 
 **下限釘的是「開機狀態不能建錯」。** 走不完不是這個測試的失敗——
@@ -175,8 +202,8 @@ F5FE  作業系統 codefile 的 segment dictionary，1 塊
 ```
 
 停在一個還沒查清楚的地方：某個區域變數原版是 `1052`，我們是 `0002`。
-資料段其餘部分逐位元組相同，所以差別多半在 codepool——那一塊目前還沒有
-逐位元組的比對工具。
+**codepool 逐位元組相同**（`MemDiff` 現在比得到），所以問題在資料段裡
+那 1,982 段還沒建出來的東西之一。
 
 ## 6. 排程器
 

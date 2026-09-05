@@ -48,6 +48,15 @@ func main() {
 		}
 		code := s.CodeSegment(r.Seg, int(r.IPC)+2)
 		proc := uint16(code[r.IPC+1])
+		if proc == 34 || proc == 44 {
+			unit := s.DataWord(r.SP)
+			if next, err := s.Trace(1, 400_000); err != nil || len(next) == 0 {
+				break
+			}
+			fmt.Printf("等 unit %-3d → IORESULT %d\n", unit, s.DataWord(0xe6))
+			seen++
+			continue
+		}
 		if proc != 18 && proc != 19 {
 			continue
 		}

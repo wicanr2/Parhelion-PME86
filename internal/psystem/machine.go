@@ -25,6 +25,7 @@ const (
 	dirBase     = stackTop - 4*Block // 磁碟目錄：4 塊
 	dictBase    = dirBase - Block    // 作業系統 codefile 的 segment dictionary：1 塊
 	dirLastBoot = 0x14               // 目錄第 0 筆裡「最後一次開機」的日期
+	dirCache    = 0x3AF0             // 目錄的第二份，作業系統自己用。位置是量到的
 )
 
 // Machine 是一台自己跑得起來的 p-System：平坦記憶體 ＋ p-machine ＋ 磁碟。
@@ -176,9 +177,13 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	// 開機磁碟的目錄先讀進來，擺在資料段最上面（`0xFFFE` 往下 2048 個位元組），
 	// SYSCOM+8 指著它。作業系統一開始就在讀 `dnumfiles`。
 	if dir := v.Blocks(2, 4); dir != nil {
-		copy(data[dirBase:], dir)
+		// **目錄有兩份。** 一份在資料段最上面，SYSCOM+8 指著它；
+		// 另一份在 0x3AF2，作業系統自己用。兩份都要蓋上開機日期。
+		for _, at := range []uint16{dirBase, dirCache} {
+			copy(data[at:], dir)
+			m.setWord(at+dirLastBoot, opt.Date)
+		}
 		m.setWord(sysCom+8, dirBase)
-		m.setWord(dirBase+dirLastBoot, opt.Date)
 	}
 	// 作業系統 codefile 的 segment dictionary 原封不動搬一塊進來，
 	// 就放在目錄下面一塊。要載別的段時，(Code_Addr, Code_Leng) 就從這裡查。

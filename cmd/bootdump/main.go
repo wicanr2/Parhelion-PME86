@@ -100,7 +100,7 @@ func main() {
 		from, to uint16
 		what     string
 	}{{0x0000, 0x0060, "直譯器狀態區"}, {0x00E0, 0x0140, "SYSCOM"}, {0x0140, 0x0260, "TIB 與全域起點"},
-		{0xD7A0, 0xD810, "堆疊頂／E_Vec／E_Rec／SIB／程式碼起點"}, {0xF5C0, 0xF640, "程式碼結束之後"}, {0xF7E0, 0xF860, "SYSCOM+8 指到的地方"}} {
+		{0xD7A0, 0xD810, "堆疊頂／E_Vec／E_Rec／SIB／程式碼起點"}, {0x3AE0, 0x3B60, "0x3AF2 那一塊"}, {0xF7E0, 0xF860, "SYSCOM+8 指到的地方"}} {
 		fmt.Printf("  %s\n", r.what)
 		for a := r.from; a < r.to; a += 16 {
 			fmt.Printf("    %04X ", a)
