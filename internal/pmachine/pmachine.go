@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/wicanr2/Parhelion-PME86/internal/pcode"
 )
@@ -87,6 +88,30 @@ type Environment interface {
 	// 給出位置。原版的 CXG **在切段之前**先查那張表（@0x13f4）；
 	// 查到就直接跳進機器碼，段完全不換。
 	Intrinsic(proc uint16) bool
+}
+
+// NativeCall 是 `NAT`：直接跳進程式碼段裡的 8086 機器碼。
+//
+// **結構上不是 p-machine 做得到的事**——要執行它得先有一台 8086。
+// 這與「還沒做」不同，寫多少 p-code 都不會讓它變得可以執行。
+type NativeCall struct{ IPC uint16 }
+
+func (e *NativeCall) Error() string {
+	return fmt.Sprintf("pmachine: %04Xh 的 NAT 跳進宿主的原生碼，p-machine 執行不了", e.IPC)
+}
+
+// TaskSwitch 是「這一步要換 task」。
+//
+// 換 task 會把整個執行狀態換成另一個 TIB 的——那是作業系統的排程器，
+// 不是一條指令的語意。非阻塞的路徑（號誌還有餘額、沒有人在等）
+// 已經做了，走到這裡表示真的要排程。
+type TaskSwitch struct {
+	IPC uint16
+	Why string
+}
+
+func (e *TaskSwitch) Error() string {
+	return fmt.Sprintf("pmachine: %04Xh 要換 task（%s），那是排程器的事", e.IPC, e.Why)
 }
 
 // IntrinsicCall 是「這一支是宿主的原生碼，p-machine 執行不了」。
@@ -521,6 +546,107 @@ func (s *State) Step() (uint8, error) {
 			s.Store(dst+2*i, s.wordFrom(mode, src+2*i))
 		}
 
+	// 浮點。8 個位元組就是 **IEEE 754 binary64，little-endian**——
+	// 由助手 @0x22a8 讀出來：`and ax,0Fh` 取尾數高 4 位、`and cx,7FF0h; shr 4`
+	// 取 11 位指數、`or al,10h` 補隱藏位元。符號是最高位元組的 bit 7
+	// （`ABR` @0x2a94 的 `and byte [bp+7],7Fh`）。
+	//
+	// **手冊 p.14 說實數是 BCD 浮點，這一版不是。** 以實作為準。
+	case 0xc0: // ADR @0x23c2
+		b := s.popReal()
+		s.pushReal(s.popReal() + b)
+	case 0xc1: // SBR @0x23bc：翻掉 TOS 的符號再落進 ADR
+		b := s.popReal()
+		s.pushReal(s.popReal() - b)
+	case 0xc2: // MPR @0x24e1
+		b := s.popReal()
+		s.pushReal(s.popReal() * b)
+	case 0xc3: // DVR @0x262a
+		b := s.popReal()
+		if b == 0 {
+			return op, &Fault{at, "實數除以零"}
+		}
+		s.pushReal(s.popReal() / b)
+	case 0xe4: // NGR @0x278c：四個 word 全零才不翻符號
+		if b := s.popBits(); b != 0 {
+			s.pushBits(b ^ 1<<63)
+		} else {
+			s.pushBits(b)
+		}
+	case 0xe3: // ABR @0x2a94：清掉符號位元
+		s.pushBits(s.popBits() &^ (1 << 63))
+	case 0xc6: // DUPR @0x2a77
+		b := s.popBits()
+		s.pushBits(b)
+		s.pushBits(b)
+	case 0xcc: // FLT @0x2770：整數轉實數
+		s.pushReal(float64(int16(s.pop())))
+	case 0xbe: // TNC @0x299c：往零截斷
+		s.push(uint16(int16(math.Trunc(s.popReal()))))
+	case 0xbf: // RND @0x29ab：四捨五入，離零方向
+		s.push(uint16(int16(math.Round(s.popReal()))))
+	case 0xcd, 0xce, 0xcf: // EQREAL／LEREAL／GEREAL @0x27b5／@0x27af／@0x27ba
+		b := s.popReal()
+		a := s.popReal()
+		s.push(b2w(op == 0xcd && a == b || op == 0xce && a <= b || op == 0xcf && a >= b))
+	case 0xf2: // LDCRL @0x2a52：常數池裡的實數，運算元是 word 偏移
+		off := s.bytes()
+		var bits uint64
+		for i := 0; i < 4; i++ {
+			bits |= uint64(s.codeWord(s.ConstPool+off+uint16(2*i))) << (16 * i)
+		}
+		s.pushBits(bits)
+	case 0xf3: // LDRD @0x2a37：TOS 是位址
+		addr := s.pop()
+		var bits uint64
+		for i := 0; i < 4; i++ {
+			bits |= uint64(s.Load(addr+uint16(2*i))) << (16 * i)
+		}
+		s.pushBits(bits)
+	case 0xf4: // STRL @0x2a19：實數在上，位址壓在它底下
+		bits := s.popBits()
+		addr := s.pop()
+		for i := 0; i < 4; i++ {
+			s.Store(addr+uint16(2*i), uint16(bits>>(16*i)))
+		}
+
+	case 0xa8: // NAT @0x0c90：`retf` 跳進程式碼段裡的 8086 機器碼
+		s.IPC = at
+		return op, &NativeCall{IPC: at}
+
+	// 多工。號誌是兩個 word：計數與等待佇列的頭（@0x1791 的 `[di]`／`[di+2]`）。
+	// 非阻塞的路徑就是加減一；真的要排隊或喚醒才進排程器。
+	case 0xdf: // WAIT @0x1755
+		sem := s.pop()
+		if n := s.Load(sem); n != 0 {
+			s.Store(sem, n-1)
+			break
+		}
+		s.IPC = at
+		return op, &TaskSwitch{IPC: at, Why: "號誌沒有餘額，這個 task 要排隊"}
+	case 0xde: // SIGNAL @0x17d5 → 助手 @0x1791
+		sem := s.pop()
+		if int16(s.Load(sem)) < 0 || s.Load(sem+2) == 0 {
+			s.Store(sem, s.Load(sem)+1)
+			break
+		}
+		s.IPC = at
+		return op, &TaskSwitch{IPC: at, Why: "有 task 在等這個號誌，要喚醒它"}
+	case 0xd1: // SPR @0x16ca：寫處理器暫存器，然後從 TIB 重讀狀態
+		v := s.pop()
+		n := int16(s.pop())
+		s.syncTIB()
+		if n >= 0 {
+			s.Store(s.TIB+2*uint16(n), v)
+		} else {
+			s.Store(uint16(0x3e+2*n), v)
+		}
+		// @0x1623 會把 MSPROC 從 TIB 讀回來。寫到別的暫存器時這是個 no-op。
+		if s.TIB != 0 {
+			w := s.Load(s.TIB + 0x12)
+			s.Proc, s.ProcHigh = w&0xff, uint8(w>>8)
+		}
+
 	case 0xbd: // SWAP @0x0807：對調堆疊頂兩個 word
 		a, b := s.pop(), s.pop()
 		s.push(a)
@@ -916,6 +1042,25 @@ func (s *State) strParam(desc uint16) ([]byte, uint16, error) {
 	}
 	return t.Code, off, nil
 }
+
+// popBits／pushBits 是堆疊上的 8 個位元組。word 0 在最上面，
+// 也就是 64 位元值的最低 16 位——little-endian。
+func (s *State) popBits() uint64 {
+	var b uint64
+	for i := 0; i < 4; i++ {
+		b |= uint64(s.pop()) << (16 * i)
+	}
+	return b
+}
+
+func (s *State) pushBits(b uint64) {
+	for i := 3; i >= 0; i-- {
+		s.push(uint16(b >> (16 * i)))
+	}
+}
+
+func (s *State) popReal() float64   { return math.Float64frombits(s.popBits()) }
+func (s *State) pushReal(v float64) { s.pushBits(math.Float64bits(v)) }
 
 // syncTIB 把執行狀態寫進目前 task 的 TIB（助手 @0x15f5）。
 //

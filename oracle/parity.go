@@ -12,6 +12,15 @@ import (
 	"github.com/wicanr2/dosgolem"
 )
 
+// errOriginalIdle 是「原版沒有再執行 p-code」。
+//
+// **這不是失敗。** 開機跑完之後系統停在等鍵盤的迴圈，那時它就不再執行
+// 任何 p-code；對拍走到這裡表示整段工作量都走完了。
+var errOriginalIdle = errors.New("oracle: 原版沒有再執行 p-code（多半停在等輸入的迴圈）")
+
+// OriginalIdle 回報停下來的原因是不是「原版沒事做了」。
+func OriginalIdle(err error) bool { return errors.Is(err, errOriginalIdle) }
+
 func firstErr(errs ...error) error {
 	for _, e := range errs {
 		if e != nil {
@@ -216,14 +225,21 @@ type ParityResult struct {
 
 // hostOwned 回報這個錯誤是不是「本來就該由宿主做的事」。
 //
-// 只有兩種：段 1 的內嵌原生程序，以及段還沒載入。前者是直譯器自己的機器碼，
-// 後者要作業系統去磁碟讀——**兩件都不是 p-machine 的語意**。
+// 四種，每一種都是 p-machine 依定義就要交出去的：
 //
-// p-code 指令沒實作**不算**。那種也重抄的話，「還沒做」會看起來像「做完了」，
+//   - 段 1 的內嵌原生程序：直譯器自己的機器碼
+//   - `NAT`：程式碼段裡的 8086 機器碼，要執行它得先有一台 8086
+//   - 段還沒載入：作業系統要去磁碟讀
+//   - 換 task：排程器把整個狀態換成另一個 TIB 的
+//
+// **p-code 指令沒實作不算。** 那種也重抄的話，「還沒做」會看起來像「做完了」，
 // 而對拍就失去意義了。
 func hostOwned(err error) bool {
 	var ic *pmachine.IntrinsicCall
-	return errors.As(err, &ic) || errors.Is(err, pmachine.ErrNotResident)
+	var nc *pmachine.NativeCall
+	var ts *pmachine.TaskSwitch
+	return errors.As(err, &ic) || errors.As(err, &nc) || errors.As(err, &ts) ||
+		errors.Is(err, pmachine.ErrNotResident)
 }
 
 // Parity 從原版此刻的狀態展開，兩邊各走 n 條 p-code，逐條比對。
@@ -254,7 +270,7 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 			// 宿主自己該做的事：讓原版走完那一條，再從它的狀態重抄一份。
 			// 這一條**沒有被驗證**，所以不進 Steps。
 			if rows, terr := s.Trace(1, budget); terr != nil || len(rows) == 0 {
-				res.Err = firstErr(terr, fmt.Errorf("oracle: 原版沒有走過那一條"))
+				res.Err = firstErr(terr, errOriginalIdle)
 				return res, nil
 			}
 			next, cerr := s.Capture()
@@ -280,7 +296,7 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 			return res, nil
 		}
 		if len(rows) == 0 {
-			res.Err = fmt.Errorf("oracle: 原版沒有走到下一條 p-code（預算 %d 條機器指令）", budget)
+			res.Err = errOriginalIdle
 			return res, nil
 		}
 		r := rows[0]

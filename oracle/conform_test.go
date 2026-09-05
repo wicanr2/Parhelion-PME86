@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/wicanr2/Parhelion-PME86/internal/codefile"
+	"github.com/wicanr2/Parhelion-PME86/internal/pcode"
+	"github.com/wicanr2/Parhelion-PME86/oracle"
 )
 
 // 這一份是 spec 01 的同狀態驗證：**我們解出來的結構，與原版實際在跑的結構，
@@ -37,7 +39,7 @@ const (
 	// 下限釘住的是**進度不能倒退**。上限走不完不是失敗——那表示碰到還沒
 	// 實作的指令，而那是下一輪的工作，不是這一輪的錯。
 	parityWant  = 50_000
-	parityFloor = 8_700
+	parityFloor = 12_900
 )
 
 func TestExecutedCodeMatchesWhatTheReaderParses(t *testing.T) {
@@ -170,15 +172,32 @@ func TestParityAgainstTheOriginal(t *testing.T) {
 	}
 	// 交給原版自己走的那幾條**沒有被驗證**，所以只能是宿主本來就該做的事。
 	// 別的也放行的話，「還沒做」會看起來像「做完了」。
+	//
+	// 三類：跨段呼叫（可能碰到段 1 的內嵌原生程序或段還沒載入）、
+	// 多工（換 task 是排程器的事）、`NAT`（跳進 8086 機器碼）。
+	hostOK := func(op uint8) bool {
+		switch {
+		case op >= 0x70 && op <= 0x77, op >= 0x93 && op <= 0x95:
+			return true // SCXG／CXL／CXG／CXI
+		case op == 0xde || op == 0xdf || op == 0xa8:
+			return true // SIGNAL／WAIT／NAT
+		}
+		return false
+	}
 	for op := range res.Skipped {
-		if !((op >= 0x70 && op <= 0x77) || (op >= 0x93 && op <= 0x95)) {
-			t.Errorf("opcode %02X 被跳過了，但它不是跨段呼叫", op)
+		if !hostOK(op) {
+			t.Errorf("opcode %02X（%s）被跳過了，但它不是宿主的工作", op, pcode.Mnemonic(op))
 		}
 	}
 	t.Logf("%d 條 p-code 逐條一致，用到 %d 種 opcode；另有 %d 條交給原版自己走",
 		res.Steps, len(res.Ops), res.Resyncs)
 	if res.Err != nil {
 		t.Logf("停下來的原因：%v", res.Err)
+	}
+	// 走完整段開機之後原版就停在等鍵盤的迴圈。走到那裡表示**整個工作量
+	// 都對拍過了**，那是收工，不是失敗。
+	if oracle.OriginalIdle(res.Err) {
+		t.Log("原版沒事做了——整段開機的 p-code 都走完")
 	}
 }
 

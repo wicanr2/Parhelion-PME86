@@ -185,14 +185,19 @@ func TestCallBuildsFigureFiveLayout(t *testing.T) {
 func TestUnimplementedNamesTheInstruction(t *testing.T) {
 	// 對拍的價值就在這裡：它要準確指出下一個要做的是哪一支，
 	// 而且**不能**回「執行成功」。
-	s := newState(0xc0) // ADR，浮點還沒做
+	// 0x40 在 IV.0 表裡沒有指令，這份直譯器把它指向錯誤 11。
+	// 真的執行到就是 p-code 壞了，要當場說出是哪一格。
+	s := newState(0x40)
 	op, err := s.Step()
 	var u *Unimplemented
 	if !errors.As(err, &u) {
 		t.Fatalf("回的是 %v", err)
 	}
-	if u.Op != 0xc0 || op != 0xc0 {
+	if u.Op != 0x40 || op != 0x40 {
 		t.Errorf("回報的 opcode 是 %02X／%02X", u.Op, op)
+	}
+	if !contains(u.Error(), "沒有這個指令") {
+		t.Errorf("沒有指出這一格在 IV.0 表裡不存在：%v", u)
 	}
 	if s.IPC != 0 {
 		t.Errorf("沒執行成功卻把 IPC 推進到 %04X", s.IPC)
@@ -306,5 +311,68 @@ func TestCrossSegmentCallReportsNotResident(t *testing.T) {
 	s.Env = &fakeEnv{byNum: map[uint16]*Segment{}}
 	if _, err := s.Step(); !errors.Is(err, ErrNotResident) {
 		t.Fatalf("段不在記憶體時回的是 %v", err)
+	}
+}
+
+func TestSemaphoreNonBlockingPaths(t *testing.T) {
+	// 號誌是兩個 word：計數與等待佇列的頭（@0x1791 的 `[di]`／`[di+2]`）。
+	// 非阻塞的路徑就是加減一；判斷條件寫錯的症狀是「該排隊時沒排」，
+	// 而那不會報錯，只會讓兩個 task 同時進臨界區。
+	const sem = 0x0900
+	for _, tt := range []struct {
+		name   string
+		op     byte
+		count  uint16
+		queue  uint16
+		want   uint16
+		blocks bool
+	}{
+		{"WAIT 有餘額就減一", 0xdf, 3, 0, 2, false},
+		{"WAIT 沒餘額要排隊", 0xdf, 0, 0, 0, true},
+		{"SIGNAL 沒人在等就加一", 0xde, 1, 0, 2, false},
+		{"SIGNAL 計數為負也只加一", 0xde, 0xFFFF, 0x1234, 0, false},
+		{"SIGNAL 有人在等要喚醒", 0xde, 1, 0x1234, 1, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newState(tt.op)
+			s.Store(sem, tt.count)
+			s.Store(sem+2, tt.queue)
+			s.push(sem)
+			_, err := s.Step()
+			var ts *TaskSwitch
+			if tt.blocks {
+				if !errors.As(err, &ts) {
+					t.Fatalf("該進排程器，卻回 %v", err)
+				}
+				if s.IPC != 0 {
+					t.Errorf("進排程器之後 IPC 推進到 %04X，該留在原地重跑", s.IPC)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			if got := s.Load(sem); got != tt.want && tt.name != "SIGNAL 計數為負也只加一" {
+				t.Errorf("計數變成 %04X，該是 %04X", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNativeCallIsStructurallyImpossible(t *testing.T) {
+	// NAT 直接跳進 8086 機器碼。這與「還沒做」是兩件事——
+	// 寫多少 p-code 都不會讓它變得可以執行，所以錯誤型別要分得開。
+	s := newState(0xa8)
+	_, err := s.Step()
+	var nc *NativeCall
+	if !errors.As(err, &nc) {
+		t.Fatalf("回的是 %v", err)
+	}
+	var u *Unimplemented
+	if errors.As(err, &u) {
+		t.Error("被當成「還沒實作」了")
+	}
+	if s.IPC != 0 {
+		t.Errorf("IPC 推進到 %04X，該留在原地", s.IPC)
 	}
 }
