@@ -20,6 +20,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/wicanr2/Parhelion-PME86/internal/pcode"
 	"github.com/wicanr2/dosgolem"
 )
 
@@ -37,6 +38,13 @@ const (
 	// DispatchBytes 是 dispatch 表的長度：256 項，每項一個 word。
 	DispatchBytes = 512
 )
+
+// dispatchSite 是分派那一跳的機器碼：`2E FF 25` ＝ `jmp word ptr cs:[di]`。
+//
+// 追蹤的判準用它，不用「IP 落在某個 dispatch 目標」。後者會多算：
+// 有些常式做完事直接跳進另一支常式的入口（`SBR` 落進 `ADR` 就是），
+// 那一跳不是取指令，卻長得一模一樣。
+var dispatchSite = [3]uint8{0x2E, 0xFF, 0x25}
 
 // System 是一台跑著 p-System 的機器。
 type System struct {
@@ -128,6 +136,26 @@ func (s *System) LocatePME(pmePath string) (uint32, error) {
 	return base, nil
 }
 
+// WaitForPME 一小段一小段地跑，直到直譯器出現在記憶體裡為止。
+//
+// 直譯器是開機途中從 .VOL 搬進來的，不知道確切在第幾條指令。
+// 一路跑到底再定位也可以，但那時系統已經在等鍵盤，**開機期間執行的
+// p-code 全部錯過了**——而那正是最容易拿來對拍的一段。
+func (s *System) WaitForPME(pmePath string, maxSteps, chunk uint64) (uint32, error) {
+	if chunk == 0 {
+		chunk = 250_000
+	}
+	for s.M.Steps < maxSteps && !s.D.Exited {
+		if base, err := s.LocatePME(pmePath); err == nil {
+			return base, nil
+		}
+		if err := s.Run(chunk); err != nil {
+			return 0, err
+		}
+	}
+	return s.LocatePME(pmePath)
+}
+
 // PME 回傳直譯器的映像基底與段值。要先呼叫 LocatePME。
 func (s *System) PME() (base uint32, seg uint16, ok bool) {
 	return s.base, s.seg, s.targets != nil
@@ -164,6 +192,30 @@ func (s *System) ImageMatches() (same, total int) {
 	return same, len(s.img)
 }
 
+// CodeSegment 讀一個載入中的 code segment 的前 n 個位元組。
+//
+// 軌跡裡的 Seg 就是段值。拿它回來與 codefile 讀取器解出來的東西對拍，
+// 才知道「我們解出來的結構」與「原版實際在跑的結構」是不是同一件事。
+func (s *System) CodeSegment(seg uint16, n int) []byte {
+	base := uint32(seg) * 16
+	if n <= 0 || base+uint32(n) > dosgolem.MemSize {
+		return nil
+	}
+	out := make([]byte, n)
+	copy(out, s.M.Mem[base:base+uint32(n)])
+	return out
+}
+
+// SegmentName 讀一個載入中的 code segment 表頭裡的 8 字元段名。
+// 段頭版面見 docs/30-remake/specs/01-codefile.md §3.1。
+func (s *System) SegmentName(seg uint16) string {
+	b := s.CodeSegment(seg, 12)
+	if b == nil {
+		return ""
+	}
+	return strings.Trim(string(b[4:12]), " \x00")
+}
+
 // PCode 是軌跡裡的一條。
 type PCode struct {
 	Seg, IPC uint16 // p-code 所在的 code segment 與段內位元組偏移
@@ -171,15 +223,35 @@ type PCode struct {
 	SP, TOS  uint16 // 求值堆疊頂的位置與內容
 }
 
+// Mnemonic 是這個 opcode 在 IV.0 官方表裡的助記符；沒有對應指令就是空字串。
+func (p PCode) Mnemonic() string { return pcode.Mnemonic(p.Op) }
+
 func (p PCode) String() string {
-	return fmt.Sprintf("%04X:%04X %02X sp=%04X tos=%04X", p.Seg, p.IPC, p.Op, p.SP, p.TOS)
+	name := p.Mnemonic()
+	if name == "" {
+		name = "?"
+	}
+	return fmt.Sprintf("%04X:%04X %02X %-6s sp=%04X tos=%04X",
+		p.Seg, p.IPC, p.Op, name, p.SP, p.TOS)
+}
+
+// atDispatchSite 回報這個位址上是不是 `jmp word ptr cs:[di]`。
+func (s *System) atDispatchSite(seg, ip uint16) bool {
+	a := uint32(seg)*16 + uint32(ip)
+	for i, b := range dispatchSite {
+		if s.M.Read8(a+uint32(i)) != b {
+			return false
+		}
+	}
+	return true
 }
 
 // Trace 記錄原版直譯器實際執行的 p-code，最多 want 條，最多花 budget 條機器指令。
 //
-// 判準是「控制權剛落到某個 dispatch 目標」。載入器把 dispatch 表搬到映像偏移 0，
-// 所以表項就是 cs 相對的常式位址；進到常式時 lodsb 已經走過，
-// 剛執行的 opcode 因此在 ds:si−1，而 si 就是 IPC。
+// 判準是「剛剛執行的那一條是 `jmp word ptr cs:[di]`，而且落點是一個 dispatch 目標」。
+// 只看落點會多算——有些常式做完事直接跳進另一支常式的入口，那一跳不是取指令。
+//
+// 進到常式時 lodsb 已經走過，所以剛取到的 opcode 在 ds:si−1，而 si 就是 IPC。
 func (s *System) Trace(want int, budget uint64) ([]PCode, error) {
 	if s.targets == nil {
 		return nil, fmt.Errorf("oracle: 還沒定位 PME，先呼叫 LocatePME")
@@ -187,8 +259,13 @@ func (s *System) Trace(want int, budget uint64) ([]PCode, error) {
 	out := make([]PCode, 0, want)
 	limit := s.M.Steps + budget
 	for len(out) < want && s.M.Steps < limit && !s.D.Exited {
+		// 記下「即將執行的那一條」，跑完再看它是不是分派那一跳。
+		fromSeg, fromIP := s.M.CPU.Seg[dosgolem.CS], s.M.CPU.IP
 		if err := s.M.Step(); err != nil {
 			return out, err
+		}
+		if fromSeg != s.seg || !s.atDispatchSite(fromSeg, fromIP) {
+			continue
 		}
 		c := s.M.CPU
 		if c.Seg[dosgolem.CS] != s.seg || !s.targets[c.IP] {

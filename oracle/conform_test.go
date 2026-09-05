@@ -1,0 +1,137 @@
+//go:build oracle
+
+package oracle_test
+
+import (
+	"os"
+	"testing"
+
+	"github.com/wicanr2/Parhelion-PME86/internal/codefile"
+)
+
+// 這一份是 spec 01 的同狀態驗證：**我們解出來的結構，與原版實際在跑的結構，
+// 是不是同一件事。**
+//
+// 靜態自洽（M0 那一輪做的）只證明「這樣讀不會自相矛盾」。
+// 要證明讀對了，得看原版把 IPC 指到哪、把段名放在哪。
+
+// traceCodefile 需要第三份素材：那份被執行的 codefile 本身。
+func traceCodefile(t *testing.T) string {
+	t.Helper()
+	p := os.Getenv("PARHELION_CODEFILE")
+	if p == "" {
+		t.Skip("沒有設 PARHELION_CODEFILE，跳過")
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Skipf("讀不到 %s，跳過", p)
+	}
+	return p
+}
+
+func TestExecutedCodeMatchesWhatTheReaderParses(t *testing.T) {
+	cfPath := traceCodefile(t)
+	s := bootToPME(t)
+	rows, err := s.Trace(400, 5_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("一條 p-code 都沒追到")
+	}
+
+	data, err := os.ReadFile(cfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cf, err := codefile.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]*codefile.Segment{}
+	for _, seg := range cf.Segments {
+		byName[seg.Name] = seg
+	}
+
+	// 軌跡碰到的每一個 code segment，都要在我們解出來的清單裡。
+	touched := map[uint16]bool{}
+	for _, r := range rows {
+		if touched[r.Seg] {
+			continue
+		}
+		touched[r.Seg] = true
+
+		name := s.SegmentName(r.Seg)
+		seg, ok := byName[name]
+		if !ok {
+			t.Fatalf("原版在跑段 %q（%04Xh），但讀取器在 %s 裡找不到這個名字",
+				name, r.Seg, cfPath)
+		}
+		t.Logf("段 %q：記憶體 %04Xh，檔案 block %d、%d words、%d 支常式",
+			name, r.Seg, seg.Block, seg.Words, len(seg.Routines))
+
+		// 段的內容要與檔案一致。作業系統只會翻轉 routine dictionary，
+		// 而 byte sex 相同的段連那個都不動。
+		live := s.CodeSegment(r.Seg, seg.Words*2)
+		same := 0
+		for i, b := range seg.Raw() {
+			if live[i] == b {
+				same++
+			}
+		}
+		if ratio := float64(same) / float64(seg.Words*2); ratio < 0.99 {
+			t.Errorf("段 %q 在記憶體裡只有 %d／%d byte 與檔案相同（%.1f%%）",
+				name, same, seg.Words*2, ratio*100)
+		}
+	}
+
+	// 每一個 IPC 都要落在「表頭之後、routine dictionary 之前」，
+	// 而且記憶體裡的那個 byte 要與檔案裡同一個位移的 byte 相同。
+	//
+	// 後半條是真正的判準：它把「讀取器算出來的段內位移」與
+	// 「原版取指令的位址」綁在一起。差一個 word 就會整片對不上。
+	const headerBytes = 22 // 11 個 word
+	for _, r := range rows {
+		seg := byName[s.SegmentName(r.Seg)]
+		raw := seg.Raw()
+		if int(r.IPC) < headerBytes || int(r.IPC) >= len(raw) {
+			t.Fatalf("IPC %04Xh 落在段 %q（%d bytes）的可執行範圍外", r.IPC, seg.Name, len(raw))
+		}
+		if got, want := raw[r.IPC], r.Op; got != want {
+			t.Fatalf("段 %q 位移 %04Xh：原版取到 %02X，檔案裡是 %02X",
+				seg.Name, r.IPC, want, got)
+		}
+	}
+	t.Logf("%d 條 p-code 的 opcode 與 codefile 逐位元組相同", len(rows))
+}
+
+// TestTraceLooksLikePCode 抓「判準抓錯東西」這種錯：
+// 追出來的若不是真的取指令，助記符會有一堆空的，IPC 也不會前進。
+func TestTraceLooksLikePCode(t *testing.T) {
+	s := bootToPME(t)
+	rows, err := s.Trace(200, 5_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) < 200 {
+		t.Fatalf("只追到 %d 條", len(rows))
+	}
+
+	unnamed := 0
+	for _, r := range rows {
+		if r.Mnemonic() == "" {
+			unnamed++
+		}
+	}
+	// 那 44 格在這份直譯器裡指向錯誤 11。真的執行到，系統早就停了。
+	if unnamed > 0 {
+		t.Errorf("%d 條的 opcode 在 IV.0 表裡沒有指令", unnamed)
+	}
+
+	// 連續兩條同一個 IPC 表示判準把「跳進另一支常式的入口」也算成取指令。
+	for i := 1; i < len(rows); i++ {
+		if rows[i].Seg == rows[i-1].Seg && rows[i].IPC == rows[i-1].IPC {
+			t.Fatalf("第 %d、%d 條是同一個 IPC %04Xh（%s）——判準多算了",
+				i-1, i, rows[i].IPC, rows[i].Mnemonic())
+		}
+	}
+}

@@ -47,9 +47,9 @@
 
 - [可行性評估](docs/30-remake/feasibility.md) — 六層盤點、oracle 迴路、四個里程碑。
 - [spec 閘門](docs/30-remake/spec-workflow.md) — `DRAFT` → `READY` → `CONFORMED`。
-- [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — 狀態 `READY`。
+- [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — 狀態 `CONFORMED`。
 
-**M0（codefile 讀取器）已經做完。** 直譯器本身還沒開始。
+**M0（codefile 讀取器）做完並且過了同狀態驗證。** 直譯器本身還沒開始。
 
 ```
 $ go run ./cmd/parhelion codefile -r SYSTEM.PASCAL
@@ -72,12 +72,23 @@ dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
 
 ```
 === oracle：把原版跑起來
---- PASS: TestBootReachesTheCommandLine (0.70s)
 --- PASS: TestLoaderMovesTheDispatchTableToOffsetZero
       映像基底 01400h，dispatch 表 512／512 byte 相同
---- PASS: TestImageIsMostlyIntact
-      映像 14094／16384 byte 與磁碟一致
+--- PASS: TestExecutedCodeMatchesWhatTheReaderParses
+      段 "USERPROG"：記憶體 1251h，檔案 block 1、3831 words、41 支常式
+      400 條 p-code 的 opcode 與 codefile 逐位元組相同
 ```
+
+軌跡讀起來就是 Pascal：
+
+```
+1251:0B08 23 SLDL4     1251:0AFA 21 SLDL2
+1251:0B09 26 SLDL7     1251:0AFB 98 LDCN
+1251:0B0A B2 LEQI      1251:0AFC B1 NEQI
+1251:0B0B D5 FJPL      1251:0AFD D5 FJPL
+```
+
+左邊是迴圈條件，右邊是 `while p <> nil`。
 
 ## 怎麼跑
 

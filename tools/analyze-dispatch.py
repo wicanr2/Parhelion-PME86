@@ -23,7 +23,7 @@ def load(path):
 
 
 def names():
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'iv0-opcodes.json')
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'internal', 'pcode', 'iv0-opcodes.json')
     return {int(k): v for k, v in json.load(open(p, encoding='utf-8'))['opcodes'].items()}
 
 

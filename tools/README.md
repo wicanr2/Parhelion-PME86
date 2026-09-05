@@ -9,7 +9,7 @@
 | `dump-routines-86.py` | 在 IDA 裡把 dispatch 表與每支常式反組譯成 JSON，並追 `call` 目標 |
 | `analyze-dispatch.py` | 從那份 JSON 產統計或 256 格 markdown 表 |
 | `routines-86.json` | `dump-routines-86.py` 的產出：169 支常式加 25 支助手 |
-| `iv0-opcodes.json` | IV.0 官方助記符表，來源見檔內 `_source` |
+
 
 ## 反組譯
 

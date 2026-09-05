@@ -39,14 +39,34 @@ func materials(t *testing.T) (com, root, pme string) {
 // 反正提早到達不會有壞處。
 const bootSteps = 20_000_000
 
+// boot 跑到系統停在命令列為止。
 func boot(t *testing.T) (*oracle.System, string) {
+	t.Helper()
+	s, pme := newSystem(t)
+	if err := s.Run(bootSteps); err != nil {
+		t.Fatal(err)
+	}
+	return s, pme
+}
+
+// bootToPME 只跑到直譯器出現為止。
+//
+// **不能先跑完再定位**：跑到底時系統已經在等鍵盤，開機期間執行的 p-code
+// 全部錯過了，而那正是要拿來對拍的一段。
+func bootToPME(t *testing.T) *oracle.System {
+	t.Helper()
+	s, pme := newSystem(t)
+	if _, err := s.WaitForPME(pme, bootSteps, 0); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func newSystem(t *testing.T) (*oracle.System, string) {
 	t.Helper()
 	com, root, pme := materials(t)
 	s, err := oracle.Boot(com, root)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Run(bootSteps); err != nil {
 		t.Fatal(err)
 	}
 	return s, pme

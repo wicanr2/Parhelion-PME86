@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 狀態 | `READY` |
-| 日期 | 2026-09-05 |
+| 狀態 | `CONFORMED` |
+| 日期 | 2026-09-05（`READY`）→ 2026-09-05（`CONFORMED`）|
 | 涵蓋 | segment dictionary 鏈、code segment 表頭、routine dictionary、byte sex |
 | 不涵蓋 | 常數池內部結構、relocation list、segment reference list、linker info、interface text |
 | 驗證樣本 | `SYSTEM.PASCAL`（69632 B，136 blocks，psys21 磁碟），28 個 segment 全數解析 |
@@ -191,7 +191,34 @@ byte sex／常數池位置／`REALSIZE`、以及每一支常式的碼起點與 `
 **不授權**：解讀常數池內容、relocation list、segment reference list，
 以及任何執行語意。那些各自需要自己的 spec。
 
-## 7. 這一輪留下的問題
+## 7. 同狀態驗證
+
+`CONFORMED` 的門檻不是「測試過了」，是**在與原版相同的狀態下比對過**。
+做法是把 1984 年 DOS 版的 p-System 跑起來（見 `oracle/`），
+在它執行 `SYSTEM.PASCAL` 的 p-code 時逐條記錄，再與讀取器解出來的東西對拍。
+測試在 `oracle/conform_test.go`。
+
+**驗到的：**
+
+- 原版在跑的 code segment，表頭第 4–11 個位元組讀出來是 `"USERPROG"`——
+  讀取器從同一份檔案解出來的段名裡有它（3.1 的段頭版面）。
+- 那個段在記憶體裡的內容與檔案裡的 `Code_Leng` 個 word **99% 以上相同**
+  （2.3 的長度定義、3.2 的段內相對位移）。
+- **400 條 p-code 的每一個 IPC，記憶體裡那個位元組與檔案裡同一個位移的位元組
+  逐一相同**。這一條把「讀取器算出來的段內位移」與「原版取指令的位址」綁在一起——
+  差一個 word 就會整片對不上。
+- 每一個 IPC 都落在表頭之後、routine dictionary 之前（3.1、5.1）。
+
+**沒驗到的**（同樣要寫出來，沒驗 ≠ 錯）：
+
+- `Seg_Misc` 的 bit 8／bit 9 語意（2.5 已經標成未驗證，樣本沒有變異）。
+- `Seg_Famly` 的變體記錄（2.7 只有靜態的自洽佐證）。
+- byte sex 相反的段，作業系統翻轉 routine dictionary 的細節（4.2）——
+  軌跡目前只碰到 `USERPROG` 一個段，而它與主機同序。
+- `DATASIZE`／`EXITIC`（5.4）是靠直譯器的碼與 430 支常式的統計定下來的，
+  不是在執行中攔到呼叫序列量的。
+
+## 8. 這一輪留下的問題
 
 - 段頭第 9、10 個 word（手冊說「保留」）在樣本裡不是零，而且隨 segment 變化。
   第一支常式的 `EXITIC` 通常落在 word 11、`DATASIZE` 在 word 12，所以這兩個 word
