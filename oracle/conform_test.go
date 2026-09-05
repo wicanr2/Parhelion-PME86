@@ -28,6 +28,18 @@ func traceCodefile(t *testing.T) string {
 	return p
 }
 
+const (
+	// traceBudget 是原版每走一條 p-code 給的機器指令預算。
+	traceBudget = 200_000
+
+	// parityWant 是想走的條數；parityFloor 是「至少要走到這裡」。
+	//
+	// 下限釘住的是**進度不能倒退**。上限走不完不是失敗——那表示碰到還沒
+	// 實作的指令，而那是下一輪的工作，不是這一輪的錯。
+	parityWant  = 50_000
+	parityFloor = 300
+)
+
 func TestExecutedCodeMatchesWhatTheReaderParses(t *testing.T) {
 	cfPath := traceCodefile(t)
 	s := bootToPME(t)
@@ -133,5 +145,31 @@ func TestTraceLooksLikePCode(t *testing.T) {
 			t.Fatalf("第 %d、%d 條是同一個 IPC %04Xh（%s）——判準多算了",
 				i-1, i, rows[i].IPC, rows[i].Mnemonic())
 		}
+	}
+}
+
+// TestParityAgainstTheOriginal 是 M1 的驗收：Go 版的 p-machine 從原版此刻的
+// 狀態展開，逐條走，每一條之後 IPC、SP、TOS 三項都要與原版相同。
+//
+// **停下來的三種情形要分得出來**：走完、有指令還沒實作、真的對不上。
+// 只有第三種是失敗——第二種是進度，會告訴我們下一個要做的是哪一支。
+func TestParityAgainstTheOriginal(t *testing.T) {
+	s := bootToPME(t)
+	if _, err := s.Trace(1, traceBudget); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Parity(parityWant, traceBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Diverge != nil {
+		t.Fatalf("走了 %d 條之後對不上：%v", res.Steps, res.Diverge)
+	}
+	if res.Steps < parityFloor {
+		t.Fatalf("只走了 %d 條就停下來（%v）——比之前少，是不是退步了？", res.Steps, res.Err)
+	}
+	t.Logf("%d 條 p-code 逐條一致，用到 %d 種 opcode", res.Steps, len(res.Ops))
+	if res.Err != nil {
+		t.Logf("停下來的原因：%v", res.Err)
 	}
 }

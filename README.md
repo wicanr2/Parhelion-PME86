@@ -47,9 +47,10 @@
 
 - [可行性評估](docs/30-remake/feasibility.md) — 六層盤點、oracle 迴路、四個里程碑。
 - [spec 閘門](docs/30-remake/spec-workflow.md) — `DRAFT` → `READY` → `CONFORMED`。
-- [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — 狀態 `CONFORMED`。
+- [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — `CONFORMED`。
+- [spec 02：p-machine 執行核心](docs/30-remake/specs/02-pmachine-core.md) — `CONFORMED`。
 
-**M0（codefile 讀取器）做完並且過了同狀態驗證。** 直譯器本身還沒開始。
+**M0 做完。M1 的對拍迴路成立：306 條 p-code 與原版逐條一致，0 個分歧。**
 
 ```
 $ go run ./cmd/parhelion codefile -r SYSTEM.PASCAL
@@ -78,6 +79,19 @@ dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
       段 "USERPROG"：記憶體 1251h，檔案 block 1、3831 words、41 支常式
       400 條 p-code 的 opcode 與 codefile 逐位元組相同
 ```
+
+對拍逐條比 `IPC`、`SP`、`TOS`：
+
+```
+$ tools/go.sh run -tags oracle ./cmd/parity -pme .../SYSTEM.PME.86
+兩邊一致地走了 306 條 p-code
+停下來的原因： pmachine: 0029h 的 opcode 70 SCXG1 還沒實作
+
+用到 56 種 opcode：
+  22 SLDL3 ×28   79 SIND1 ×26   28 SLDL9 ×24   E6 IND ×17   25 SLDL6 ×14 …
+```
+
+停在跨段呼叫是預期的——那要換整個程式碼段。**沒有分歧**才是重點。
 
 軌跡讀起來就是 Pascal：
 
