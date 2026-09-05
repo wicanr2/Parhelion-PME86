@@ -23,6 +23,7 @@ func main() {
 	at := flag.Uint("at", 0, "要監看的資料段位址")
 	span := flag.Uint("span", 2, "監看幾個位元組")
 	n := flag.Int("n", 60000, "最多走幾條 p-code")
+	from := flag.Int("from", 0, "先走幾條再開始監看")
 	want := flag.Int("want", 12, "記幾次寫入")
 	flag.Parse()
 	if *pme == "" || *at == 0 {
@@ -36,6 +37,12 @@ func main() {
 	}
 	if _, err := s.WaitForPME(*pme, 20_000_000, 0); err != nil {
 		die(err)
+	}
+
+	for i := 0; i < *from; i++ {
+		if rows, err := s.Trace(1, 400_000); err != nil || len(rows) == 0 {
+			die(fmt.Errorf("走不到第 %d 條：%v", *from, err))
+		}
 	}
 
 	base := uint32(s.M.CPU.Seg[dosgolem.SS]) * 16

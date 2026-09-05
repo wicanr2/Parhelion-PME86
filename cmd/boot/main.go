@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/wicanr2/Parhelion-PME86/internal/pcode"
 	"github.com/wicanr2/Parhelion-PME86/internal/psystem"
@@ -15,6 +17,7 @@ func main() {
 	osFile := flag.String("os", "SYSTEM.PASCAL", "作業系統的 codefile")
 	n := flag.Int("n", 1000, "最多走幾條 p-code")
 	trace := flag.Int("trace", 0, "印出前幾條的軌跡")
+	peek := flag.String("peek", "", "跑完印出這些資料段位址的 word，逗號分隔")
 	flag.Parse()
 	if *volPath == "" {
 		flag.Usage()
@@ -54,6 +57,16 @@ func main() {
 		fmt.Printf("走完 %d 條，沒有停下來的理由\n", steps)
 	}
 	report(m)
+	if *peek != "" {
+		fmt.Println("\n看幾個位址：")
+		for _, f := range strings.Split(*peek, ",") {
+			off, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(f), "0x"), 16, 16)
+			if err != nil {
+				continue
+			}
+			fmt.Printf("  %04X = %04X\n", off, m.Word(uint16(off)))
+		}
+	}
 }
 
 func report(m *psystem.Machine) {

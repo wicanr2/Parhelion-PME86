@@ -80,7 +80,7 @@ func TestSelfBootMatchesTheOriginal(t *testing.T) {
 		}
 		if bad != "" {
 			t.Log(bad)
-			t.Logf("  進這一條時 sp=%04X tos=%04X", spIn, tosIn)
+			t.Logf("  進這一條時 sp=%04X tos=%04X mp=%04X 區域基底=%04X", spIn, tosIn, m.S.Local-8, m.S.Local)
 			for _, d := range s.DataDiff(m.S, 40) {
 				t.Log("  資料段不同：", d)
 			}
@@ -136,7 +136,18 @@ func TestSelfBootInitialStateDiff(t *testing.T) {
 		}
 		t.Log("  ", d)
 	}
-	t.Logf("開機那一刻資料段有 %d 段不同", len(diff))
+	// 分開數：`0x0192`–`0x06EF` 那一段是 bootstrap 從直譯器映像搬進來的
+	// **8086 機器碼**（作業系統用 `NAT` 呼叫它）。我們的宿主是 Go，
+	// 那一塊本來就不會有——**這個指標永遠歸不了零**，要分開看。
+	native := 0
+	for _, d := range diff {
+		var lo uint32
+		if _, err := fmt.Sscanf(d, "%05X", &lo); err == nil && lo >= 0x0192 && lo < 0x06F0 {
+			native++
+		}
+	}
+	t.Logf("開機那一刻資料段有 %d 段不同，其中 %d 段是原生驅動的機器碼",
+		len(diff), native)
 	if len(diff) > initialDiffCeiling {
 		t.Fatalf("不同的段數 %d 超過上限 %d——bootstrap 又多做了什麼沒補上",
 			len(diff), initialDiffCeiling)
@@ -145,4 +156,4 @@ func TestSelfBootInitialStateDiff(t *testing.T) {
 
 // initialDiffCeiling 是「還沒重建出來的 bootstrap 動作」還剩幾段。
 // **只准往下**：補一項就把它調低，才看得出進度。
-const initialDiffCeiling = 1982
+const initialDiffCeiling = 540

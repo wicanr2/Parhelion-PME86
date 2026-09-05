@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/wicanr2/Parhelion-PME86/internal/psystem"
 	"github.com/wicanr2/Parhelion-PME86/oracle"
+	"github.com/wicanr2/dosgolem"
 )
 
 func main() {
@@ -21,6 +23,8 @@ func main() {
 	pme := flag.String("pme", "", "抽出來的 SYSTEM.PME.86")
 	at := flag.Int("at", 1, "走到第幾條 p-code 才量")
 	chunk := flag.Uint64("chunk", 250_000, "找直譯器時每次跑幾條機器指令")
+	findFile := flag.String("findfile", "", "把 .VOL 裡這個檔案的開頭拿去記憶體裡找")
+	vol := flag.String("vol", "/orig/PSYSTEM.VOL", "要從哪片磁碟取檔案")
 	flag.Parse()
 	if *pme == "" {
 		flag.Usage()
@@ -37,6 +41,10 @@ func main() {
 	rows, err := s.Trace(*at, 5_000_000)
 	if err != nil || len(rows) == 0 {
 		die(fmt.Errorf("走不到第 %d 條：%v", *at, err))
+	}
+	if *findFile != "" {
+		findInMemory(s, *vol, *findFile)
+		return
 	}
 	r := s.Regs()
 	fmt.Printf("找到直譯器時機器走了 %d 條指令\n", s.M.Steps)
@@ -118,6 +126,43 @@ func main() {
 		name string
 	}{{0, "MSSTAT"}, {2, "MSDYN"}, {4, "MSIPC"}, {6, "MSENV"}, {8, "MSPROC"}} {
 		fmt.Printf("  +%d %-7s %04X\n", f.off, f.name, s.DataWord(mp+f.off))
+	}
+}
+
+// findInMemory 把磁碟上某個檔案的開頭拿到記憶體裡找。
+//
+// bootstrap 把哪些檔案讀進來、讀到哪裡，這樣一次就看得到——
+// 比反組譯它快，而且答案是實際發生的事。
+func findInMemory(s *oracle.System, volPath, name string) {
+	data, err := os.ReadFile(volPath)
+	if err != nil {
+		die(err)
+	}
+	v, err := psystem.OpenVolume(data)
+	if err != nil {
+		die(err)
+	}
+	blob, err := v.Read(name)
+	if err != nil {
+		die(err)
+	}
+	n := 32
+	if len(blob) < n {
+		n = len(blob)
+	}
+	hits := s.M.Find(blob[:n])
+	ss := uint32(s.M.CPU.Seg[dosgolem.SS]) * 16
+	fmt.Printf("%s 的前 %d 個位元組在記憶體裡出現 %d 次：\n", name, n, len(hits))
+	for _, h := range hits {
+		rel := ""
+		if h >= ss && h < ss+0x10000 {
+			rel = fmt.Sprintf("（資料段 %04X）", h-ss)
+		}
+		run := 0
+		for run < len(blob) && int(h)+run < len(s.M.Mem) && s.M.Mem[int(h)+run] == blob[run] {
+			run++
+		}
+		fmt.Printf("  %05X %s 一路相同 %d／%d 個位元組\n", h, rel, run, len(blob))
 	}
 }
 

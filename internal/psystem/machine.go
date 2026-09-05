@@ -14,18 +14,21 @@ const MemSize = 640 * 1024
 // 資料段裡幾個固定位置。偏移的來源是原版執行時量出來的版面
 // （docs/10-interpreter/machine-state.md 與 docs/30-remake/specs/03-boot.md）。
 const (
-	stateSysCom = 0x0140             // 系統通訊區
-	stateTIB    = 0x0154             // 開機那個 task 的 TIB
-	stateBase   = 0x0170             // 最外層的 BASE：全域資料的框
-	dataSeg     = 0x04D1             // 資料段的 paragraph，沿用原版的值好逐條對照
-	codeBase    = 0xD800             // 開機那一段程式碼在資料段裡的位置
-	sysCom      = 0x00E6             // SYSCOM：單元表與 I/O 狀態
-	bootUnit    = 14                 // 開機磁碟的 unit 編號
-	stackTop    = 0xFFFE             // 資料段的上緣，也是 TIB 記的堆疊上界
-	dirBase     = stackTop - 4*Block // 磁碟目錄：4 塊
-	dictBase    = dirBase - Block    // 作業系統 codefile 的 segment dictionary：1 塊
-	dirLastBoot = 0x14               // 目錄第 0 筆裡「最後一次開機」的日期
-	dirCache    = 0x3AF0             // 目錄的第二份，作業系統自己用。位置是量到的
+	stateSysCom    = 0x0140             // 系統通訊區
+	stateTIB       = 0x0154             // 開機那個 task 的 TIB
+	stateBase      = 0x0170             // 最外層的 BASE：全域資料的框
+	dataSeg        = 0x04D1             // 資料段的 paragraph，沿用原版的值好逐條對照
+	codeBase       = 0xD800             // 開機那一段程式碼在資料段裡的位置
+	sysCom         = 0x00E6             // SYSCOM：單元表與 I/O 狀態
+	bootUnit       = 14                 // 開機磁碟的 unit 編號
+	stackTop       = 0xFFFE             // 資料段的上緣，也是 TIB 記的堆疊上界
+	dirBase        = stackTop - 4*Block // 磁碟目錄：4 塊
+	dictBase       = dirBase - Block    // 作業系統 codefile 的 segment dictionary：1 塊
+	dirLastBoot    = 0x14               // 目錄第 0 筆裡「最後一次開機」的日期
+	configBase     = 0x5020             // SYSTEM.CONFIG 整份
+	configWorkBase = 0x06F0             // 它的前 5 塊，另一份
+	configWork     = 5 * Block
+	dirCache       = 0x3AF0 // 目錄的第二份，作業系統自己用。位置是量到的
 )
 
 // Machine 是一台自己跑得起來的 p-System：平坦記憶體 ＋ p-machine ＋ 磁碟。
@@ -52,6 +55,9 @@ type Machine struct {
 	Console []byte // 寫到主控台的位元組
 	Keys    []byte // 還沒被讀走的鍵盤輸入
 }
+
+// Word 讀資料段裡的一個 word。診斷用。
+func (m *Machine) Word(off uint16) uint16 { return m.word(off) }
 
 // word／setWord 讀寫資料段裡的一個 word。
 func (m *Machine) word(off uint16) uint16 {
@@ -185,6 +191,18 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 		}
 		m.setWord(sysCom+8, dirBase)
 	}
+	// SYSTEM.CONFIG 是這台機器的裝置組態：驅動的名字、每個 unit 的記錄。
+	// bootstrap 把它整份讀進 0x5020，前 5 塊另外再放一份在 0x06F0。
+	// **這是那 1,982 段差異裡最大的一塊。**
+	if cfg, err := v.Read("SYSTEM.CONFIG"); err == nil {
+		copy(data[configBase:], cfg)
+		n := configWork
+		if len(cfg) < n {
+			n = len(cfg)
+		}
+		copy(data[configWorkBase:], cfg[:n])
+	}
+
 	// 作業系統 codefile 的 segment dictionary 原封不動搬一塊進來，
 	// 就放在目錄下面一塊。要載別的段時，(Code_Addr, Code_Leng) 就從這裡查。
 	if len(raw) >= codefile.BlockSize {
