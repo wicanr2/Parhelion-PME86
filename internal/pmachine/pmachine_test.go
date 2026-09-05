@@ -144,7 +144,7 @@ func TestCallBuildsFigureFiveLayout(t *testing.T) {
 	// 字典往回長：程序 2 的字典項在 ProcDict − 4，值是 DATASIZE 的 word 偏移。
 	binary.LittleEndian.PutUint16(s.Code[0x40-4:], 0x10)
 	binary.LittleEndian.PutUint16(s.Code[0x20:], 3) // DATASIZE = 3 個 word
-	s.Proc, s.Env = 7, 0x1234
+	s.Proc, s.ERec = 7, 0x1234
 	oldSP, oldLocal := s.SP, s.Local
 
 	s.run(t, 1)
@@ -191,5 +191,115 @@ func TestUnimplementedNamesTheInstruction(t *testing.T) {
 	}
 	if s.IPC != 0 {
 		t.Errorf("沒執行成功卻把 IPC 推進到 %04X", s.IPC)
+	}
+}
+
+// fakeEnv 是測試用的 Environment：段號直接對到預先擺好的 Segment。
+type fakeEnv struct {
+	byNum     map[uint16]*Segment
+	byERec    map[uint16]*Segment
+	intrinsic map[uint16]bool
+}
+
+func (e *fakeEnv) Intrinsic(proc uint16) bool { return e.intrinsic[proc] }
+
+func (e *fakeEnv) ByNumber(n uint16) (*Segment, error) {
+	if s, ok := e.byNum[n]; ok {
+		return s, nil
+	}
+	return nil, ErrNotResident
+}
+
+func (e *fakeEnv) ByERec(r uint16) (*Segment, error) {
+	if s, ok := e.byERec[r]; ok {
+		return s, nil
+	}
+	return nil, ErrNotResident
+}
+
+// TestCrossSegmentCallSwitchesEverythingTogether 釘住「切段是一整組」。
+//
+// 少換一項不會報錯：常數池沒換就讀到別段的常數、字典沒換就呼叫到別段的程序，
+// 而兩者都只是安靜地讀到看起來像資料的東西。
+func TestCrossSegmentCallAndReturn(t *testing.T) {
+	target := &Segment{
+		Code:      make([]byte, 0x100),
+		Global:    0x0600,
+		ProcDict:  0x40,
+		ConstPool: 0x30,
+		ERec:      0x2222,
+	}
+	binary.LittleEndian.PutUint16(target.Code[0x40-2:], 0x10) // 程序 1 → word 0x10
+	binary.LittleEndian.PutUint16(target.Code[0x20:], 2)      // DATASIZE = 2
+	target.Code[0x22] = 0x96                                  // RPU
+	target.Code[0x23] = 0x00                                  // B = 0
+
+	s := newState(0x70, 0x01, 0xEE) // SCXG1 程序 1，返回後接 DECI
+	home := &Segment{
+		Code: s.Code, Global: s.Global, ProcDict: 0, ConstPool: 0, ERec: 0x1111,
+	}
+	s.ERec = home.ERec
+	s.Env = &fakeEnv{
+		byNum:  map[uint16]*Segment{1: target},
+		byERec: map[uint16]*Segment{home.ERec: home, target.ERec: target},
+	}
+	oldLocal := s.Local
+
+	s.run(t, 1) // SCXG1
+
+	if s.ERec != target.ERec {
+		t.Fatalf("E_Rec 還是 %04X，沒有切段", s.ERec)
+	}
+	if s.Global != target.Global || s.ProcDict != target.ProcDict || s.ConstPool != target.ConstPool {
+		t.Errorf("切段沒有一起換：Global=%04X ProcDict=%04X ConstPool=%04X",
+			s.Global, s.ProcDict, s.ConstPool)
+	}
+	if s.IPC != 0x22 {
+		t.Errorf("IPC = %04X，該是被呼叫者的第一條 0022", s.IPC)
+	}
+	// MSENV 要記**呼叫端**的 E_Rec，不是切過去之後的——記錯了返回時換不回來。
+	if got := s.Load(s.Local - 8 + 6); got != home.ERec {
+		t.Errorf("MSENV = %04X，該是呼叫端的 %04X", got, home.ERec)
+	}
+
+	s.run(t, 1) // RPU
+
+	if s.ERec != home.ERec {
+		t.Errorf("返回之後 E_Rec 是 %04X，沒有換回來", s.ERec)
+	}
+	if s.ConstPool != home.ConstPool || s.ProcDict != home.ProcDict {
+		t.Error("返回之後常數池／字典沒有換回來")
+	}
+	if s.Local != oldLocal {
+		t.Errorf("返回之後區域基底是 %04X，該是 %04X", s.Local, oldLocal)
+	}
+	if s.IPC != 2 {
+		t.Errorf("返回之後 IPC = %04X，該是呼叫指令之後的 0002", s.IPC)
+	}
+}
+
+// TestSegmentOneIntrinsicIsCaughtBeforeSwitching 釘住順序。
+//
+// 原版查內嵌表在切段**之前**，而且查到就完全不換段。先切再發現會留下
+// 換了一半的狀態——而那不會報錯，只會讓後面每一條都讀錯地方。
+func TestSegmentOneIntrinsicIsCaughtBeforeSwitching(t *testing.T) {
+	s := newState(0x70, 0x18) // SCXG1 程序 24
+	s.ERec = 0x1111
+	s.Env = &fakeEnv{intrinsic: map[uint16]bool{24: true}}
+	_, err := s.Step()
+	var ic *IntrinsicCall
+	if !errors.As(err, &ic) || ic.Proc != 24 {
+		t.Fatalf("回的是 %v", err)
+	}
+	if s.ERec != 0x1111 {
+		t.Errorf("E_Rec 變成 %04X——切了一半", s.ERec)
+	}
+}
+
+func TestCrossSegmentCallReportsNotResident(t *testing.T) {
+	s := newState(0x70, 0x01)
+	s.Env = &fakeEnv{byNum: map[uint16]*Segment{}}
+	if _, err := s.Step(); !errors.Is(err, ErrNotResident) {
+		t.Fatalf("段不在記憶體時回的是 %v", err)
 	}
 }

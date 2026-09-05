@@ -50,7 +50,8 @@
 - [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — `CONFORMED`。
 - [spec 02：p-machine 執行核心](docs/30-remake/specs/02-pmachine-core.md) — `CONFORMED`。
 
-**M0 做完。M1 的對拍迴路成立：306 條 p-code 與原版逐條一致，0 個分歧。**
+**M0 做完。M1 的對拍迴路成立：306 條 p-code 與原版逐條一致，0 個分歧。
+跨段呼叫已完成並驗過**——段解析與原版五項全同，對拍實際走過一次換段。
 
 ```
 $ go run ./cmd/parhelion codefile -r SYSTEM.PASCAL
@@ -91,7 +92,8 @@ $ tools/go.sh run -tags oracle ./cmd/parity -pme .../SYSTEM.PME.86
   22 SLDL3 ×28   79 SIND1 ×26   28 SLDL9 ×24   E6 IND ×17   25 SLDL6 ×14 …
 ```
 
-停在跨段呼叫是預期的——那要換整個程式碼段。**沒有分歧**才是重點。
+停在段 1 的內嵌原生程序——那 26 支是宿主的機器碼，不是 p-code。
+**沒有分歧**才是重點。
 
 軌跡讀起來就是 Pascal：
 

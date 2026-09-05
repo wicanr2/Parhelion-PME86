@@ -3,6 +3,7 @@
 package oracle
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/wicanr2/Parhelion-PME86/internal/pcode"
@@ -41,9 +42,92 @@ func (s *System) Capture() (*pmachine.State, error) {
 		ConstPool: s.M.Read16(uint32(dataSeg)*16 + 0x42),
 		ProcDict:  s.M.Read16(uint32(dataSeg)*16 + 0x36),
 		Proc:      s.M.Read16(uint32(dataSeg)*16 + 0x32),
-		Env:       s.M.Read16(uint32(dataSeg)*16 + 0x3e),
+		ERec:      s.M.Read16(uint32(dataSeg)*16 + 0x3e),
+		Env:       &liveEnv{s},
 	}, nil
 }
+
+// ResolveSegment 用原版執行時的資料結構算出某個 segment number 對應哪一段。
+// 給測試與探路用；跑起來的時候是 pmachine 自己透過 Environment 呼叫。
+func (s *System) ResolveSegment(seg uint16) (*pmachine.Segment, error) {
+	return (&liveEnv{s}).ByNumber(seg)
+}
+
+// IsIntrinsic 回報段 1 的這支程序是不是內嵌在直譯器裡的原生碼。
+func (s *System) IsIntrinsic(proc uint16) bool { return (&liveEnv{s}).Intrinsic(proc) }
+
+// liveEnv 用原版執行時的資料結構解析段：E_Vec → E_Rec → SIB → Codepool。
+//
+// **這一段知識刻意留在這裡，不放進 pmachine。** SIB 與 Codepool 是作業系統的
+// 資料結構，換一個宿主（例如以後從 codefile 自己載入）就完全不同；
+// p-machine 只需要「給我那一段的樣子」。
+type liveEnv struct{ s *System }
+
+func (e *liveEnv) ByNumber(seg uint16) (*pmachine.Segment, error) {
+	erec := e.s.DataWord(e.s.DataWord(evecOff) + 2*seg)
+	if erec == 0 {
+		return nil, fmt.Errorf("oracle: E_Vec 裡沒有段 %d", seg)
+	}
+	return e.ByERec(erec)
+}
+
+// ByERec 照 @0x0fba 的做法把一個 E_Rec 換算成執行期的段。
+//
+// `Seg_Base` 是 SIB 開頭的兩個 word：第一個是**指向 Codepool 基底的指標**
+// （相對直譯器的資料段），第二個是**池內的位元組偏移**。
+// 段值 ＝ Codepool 基底的 paragraph ＋ 偏移 ÷ 16。
+//
+// 指標為 0 表示那一段就在直譯器自己的段裡（@0x1BEE 的 `test bp,bp; jz`）。
+// 偏移為 0 表示段不在記憶體——原版這時退回指令開頭發 segment fault（@0x143d）。
+func (e *liveEnv) ByERec(erec uint16) (*pmachine.Segment, error) {
+	envData := e.s.DataWord(erec)
+	sib := e.s.DataWord(erec + 4)
+	if sib == 0 {
+		return nil, fmt.Errorf("oracle: E_Rec %04Xh 沒有 SIB", erec)
+	}
+	ptr, off := e.s.DataWord(sib), e.s.DataWord(sib+2)
+	if off == 0 {
+		return nil, pmachine.ErrNotResident
+	}
+	pool := e.s.M.CPU.Seg[dosgolem.SS]
+	if ptr != 0 {
+		lo, hi := e.s.DataWord(ptr), e.s.DataWord(ptr+2)
+		pool = hi>>4 | (lo&0xF)<<12
+	}
+	seg := pool + off>>4
+
+	code := e.s.M.SegmentBytes(seg, segLen(seg))
+	if len(code) < codeHeaderBytes {
+		return nil, fmt.Errorf("oracle: 段值 %04Xh 讀不出程式碼", seg)
+	}
+	return &pmachine.Segment{
+		Code:      code,
+		Global:    envData + 8,
+		ProcDict:  binary.LittleEndian.Uint16(code[0:]) * 2,
+		ConstPool: binary.LittleEndian.Uint16(code[0x0e:]) * 2,
+		ERec:      erec,
+	}, nil
+}
+
+// Intrinsic 查直譯器裡的內嵌程序表。
+//
+// 表在映像偏移 0x1f56 起 48 格，以程序號為索引；非零就是有內嵌實作
+// （docs/10-interpreter/segment-switching.md）。原版的 CXG 在切段之前查它。
+func (e *liveEnv) Intrinsic(proc uint16) bool {
+	base, _, ok := e.s.PME()
+	if !ok || proc > intrinsicMax {
+		return false
+	}
+	return e.s.M.Read16(base+intrinsicTable+uint32(proc)*2) != 0
+}
+
+// 直譯器狀態區裡用得到的偏移、段頭長度、內嵌程序表。
+const (
+	evecOff         = 0x3a
+	codeHeaderBytes = 22
+	intrinsicTable  = 0x1f56
+	intrinsicMax    = 0x2f
+)
 
 // segLen 是一個段從基底到記憶體上緣能取多少，最多一整個段。
 func segLen(seg uint16) int {

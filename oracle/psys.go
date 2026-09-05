@@ -216,6 +216,60 @@ func (s *System) SegmentName(seg uint16) string {
 	return strings.Trim(string(b[4:12]), " \x00")
 }
 
+// Regs 是原版此刻幾個關鍵暫存器與直譯器狀態變數的快照，給探路用。
+type Regs struct {
+	CS, DS, SS, SP, SI, BX, DX uint16
+
+	ERec      uint16 // ss:3Eh
+	EVec      uint16 // ss:3Ah
+	SIB       uint16 // ss:34h
+	EnvData   uint16 // ss:30h
+	ProcDict  uint16 // ss:36h
+	ConstPool uint16 // ss:42h
+	CodeSeg   uint16 // ss:2Ah
+	Proc      uint16 // ss:32h
+}
+
+// Regs 讀那份快照。狀態變數的偏移見 docs/10-interpreter/machine-state.md。
+func (s *System) Regs() Regs {
+	c := s.M.CPU
+	ss := c.Seg[dosgolem.SS]
+	w := func(off uint16) uint16 { return s.M.Read16(uint32(ss)*16 + uint32(off)) }
+	return Regs{
+		CS: c.Seg[dosgolem.CS], DS: c.Seg[dosgolem.DS], SS: ss,
+		SP: c.R[dosgolem.SP], SI: c.R[dosgolem.SI],
+		BX: c.R[dosgolem.BX], DX: c.R[dosgolem.DX],
+		ERec: w(0x3e), EVec: w(0x3a), SIB: w(0x34), EnvData: w(0x30),
+		ProcDict: w(0x36), ConstPool: w(0x42), CodeSeg: w(0x2a), Proc: w(0x32),
+	}
+}
+
+// FindName 在記憶體裡找「表頭段名是這個」的 code segment，回段值。
+//
+// 段頭第 4–11 個位元組是段名（spec 01 §3.1），而段一定從段邊界開始，
+// 所以命中的位址減 4 要是 16 的倍數。
+func (s *System) FindName(name string) []uint16 {
+	if len(name) == 0 {
+		return nil
+	}
+	padded := name
+	for len(padded) < 8 {
+		padded += " "
+	}
+	var out []uint16
+	for _, a := range s.M.Find([]byte(padded)) {
+		if a >= 4 && (a-4)%16 == 0 {
+			out = append(out, uint16((a-4)/16))
+		}
+	}
+	return out
+}
+
+// DataWord 讀資料段（ss）的一個 word。
+func (s *System) DataWord(off uint16) uint16 {
+	return s.M.Read16(uint32(s.M.CPU.Seg[dosgolem.SS])*16 + uint32(off))
+}
+
 // PCode 是軌跡裡的一條。
 type PCode struct {
 	Seg, IPC uint16 // p-code 所在的 code segment 與段內位元組偏移

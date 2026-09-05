@@ -10,6 +10,7 @@ package pmachine
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/wicanr2/Parhelion-PME86/internal/pcode"
@@ -39,11 +40,55 @@ type State struct {
 	// 字典**往回長**：程序 n 的字典項在 ProcDict − 2n。
 	ProcDict uint16
 
-	// Proc／Env 是目前的 MSPROC 與 E_Rec（直譯器的 ss:32h、ss:3Eh）。
+	// Proc／ERec 是目前的 MSPROC 與 E_Rec（直譯器的 ss:32h、ss:3Eh）。
 	// 呼叫時要把它們存進 MSCW，返回時要還原——不模型化的話堆疊內容會對不上。
 	Proc uint16
-	Env  uint16
+	ERec uint16
+
+	// Env 回答「segment number（或 E_Rec）對應哪一段」，跨段呼叫要用。
+	// nil 表示只跑得動同一段。
+	//
+	// **這一層刻意不認得 SIB 與 Codepool。** 那是作業系統的資料結構，
+	// 換一個宿主就不一樣；p-machine 只需要「給我那一段的樣子」。
+	Env Environment
 }
+
+// Segment 是一個載入好的 code segment 在執行期的樣子。
+type Segment struct {
+	Code      []byte
+	Global    uint16 // Env_Data + 8
+	ProcDict  uint16 // 程序字典在 Code 裡的位元組偏移
+	ConstPool uint16 // 常數池在 Code 裡的位元組偏移
+	ERec      uint16
+}
+
+// Environment 解析 segment number 與 E_Rec。
+type Environment interface {
+	// ByNumber 用 segment number 找段。段不在記憶體時回 ErrNotResident。
+	ByNumber(seg uint16) (*Segment, error)
+	// ByERec 用 E_Rec 指標找段，返回跨段呼叫時要用。
+	ByERec(erec uint16) (*Segment, error)
+
+	// Intrinsic 回報「段 1 的這支程序是不是內嵌在宿主裡的原生碼」。
+	//
+	// 手冊 p.66：segment 號為 1 時程序碼可能內嵌在直譯器裡，由直譯器的表格
+	// 給出位置。原版的 CXG **在切段之前**先查那張表（@0x13f4）；
+	// 查到就直接跳進機器碼，段完全不換。
+	Intrinsic(proc uint16) bool
+}
+
+// IntrinsicCall 是「這一支是宿主的原生碼，p-machine 執行不了」。
+//
+// 與「跨段呼叫還沒做」是兩件事：段的機制是通的，缺的是那一支的行為。
+type IntrinsicCall struct{ Proc uint16 }
+
+func (e *IntrinsicCall) Error() string {
+	return fmt.Sprintf("pmachine: 段 1 的程序 %d 是內嵌在直譯器裡的原生碼，還沒實作", e.Proc)
+}
+
+// ErrNotResident 是「那一段不在記憶體」。原版遇到這個會退回指令開頭、
+// 發 segment fault 讓作業系統去載入，然後**重跑同一條指令**。
+var ErrNotResident = errors.New("pmachine: 段不在記憶體")
 
 // Unimplemented 是「這個 opcode 還沒做」。
 //
@@ -421,6 +466,30 @@ func (s *State) Step() (uint8, error) {
 			return op, err
 		}
 
+	// 跨段呼叫。切段（@0x0fab）之後才建框，所以 @0x1057 推進 MSCW 的
+	// `word_3E` 已經是**新的** E_Rec；@0x10db 再把 `[MP+6]` 改回舊的。
+	// 這裡直接推舊的，效果一樣。
+	case 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77: // SCXG @0x0545：段號編在 opcode 裡
+		if err := s.callExternal(uint16(op)-0x6f, uint16(s.fetch()), globalLink); err != nil {
+			return op, err
+		}
+	case 0x93: // CXL @0x13b8：靜態鏈是呼叫者自己的框
+		seg := uint16(s.fetch())
+		if err := s.callExternal(seg, uint16(s.fetch()), localLink); err != nil {
+			return op, err
+		}
+	case 0x94: // CXG @0x13eb／@0x1413：靜態鏈是目標段的 BASE
+		seg := uint16(s.fetch())
+		if err := s.callExternal(seg, uint16(s.fetch()), globalLink); err != nil {
+			return op, err
+		}
+	case 0x95: // CXI @0x1457／@0x1475：往外走 DB 層
+		seg := uint16(s.fetch())
+		db := uint16(s.fetch())
+		if err := s.callExternal(seg, uint16(s.fetch()), db); err != nil {
+			return op, err
+		}
+
 	case 0x96: // RPU @0x1102
 		if err := s.returnFrom(s.bytes()); err != nil {
 			return op, err
@@ -477,7 +546,7 @@ func (s *State) call(proc, static uint16) error {
 	mp := s.Local - 8
 	s.push(s.Proc) // MSPROC
 	s.Proc = proc
-	s.push(s.Env)  // MSENV
+	s.push(s.ERec) // MSENV
 	s.push(s.IPC)  // MSIPC：呼叫端的下一條
 	s.push(mp)     // MSDYN
 	s.push(static) // MSSTAT
@@ -486,13 +555,72 @@ func (s *State) call(proc, static uint16) error {
 	return nil
 }
 
-// returnFrom 拆掉活動記錄（@0x1102）。paramBytes 是要從堆疊上削掉的參數位元組數。
+// callExternal 是跨段呼叫：先切段，再照同段的方式建框。
 //
-// 跨段返回（MSCW 的 E_Rec 與目前的不同）還沒做——那要把整個段換掉。
+// link 是靜態鏈的來源：localLink 用呼叫者的 MP、globalLink 用**目標段**的 BASE，
+// 其餘的值是要往外走幾層靜態鏈。
+func (s *State) callExternal(seg, proc, link uint16) error {
+	if s.Env == nil {
+		return &Fault{s.IPC, "沒有 Environment，跨段呼叫做不了"}
+	}
+	// 段 1 的內嵌程序在切段之前就攔下來——原版也是這個順序（@0x13f4），
+	// 而且它根本不換段。
+	if seg == 1 && s.Env.Intrinsic(proc) {
+		return &IntrinsicCall{Proc: proc}
+	}
+	target, err := s.Env.ByNumber(seg)
+	if err != nil {
+		return err
+	}
+
+	// 靜態鏈要在切段**之前**算——localLink 與走鏈都是呼叫端這一側的東西。
+	var static uint16
+	switch link {
+	case localLink:
+		static = s.Local - 8
+	case globalLink:
+		static = target.Global - 8
+	default:
+		static = s.chain(link)
+	}
+
+	old := s.ERec
+	s.enter(target)
+	if err := s.call(proc, static); err != nil {
+		return err
+	}
+	s.Store(s.Local-8+6, old) // @0x10db：MSENV 改回呼叫端的 E_Rec
+	return nil
+}
+
+// enter 把目前的執行環境換成另一段（@0x0fba）。
+func (s *State) enter(t *Segment) {
+	s.Code = t.Code
+	s.Global = t.Global
+	s.ProcDict = t.ProcDict
+	s.ConstPool = t.ConstPool
+	s.ERec = t.ERec
+}
+
+// 靜態鏈的來源。0 與 1 以上都是「往外走幾層」，所以哨兵值要挑不會撞到的。
+const (
+	localLink  = 0xFFFF
+	globalLink = 0xFFFE
+)
+
+// returnFrom 拆掉活動記錄（@0x1102）。paramBytes 是要從堆疊上削掉的參數位元組數。
 func (s *State) returnFrom(paramBytes uint16) error {
 	mp := s.Local - 8
-	if env := s.Load(mp + 6); env != s.Env {
-		return &Fault{s.IPC, "跨段返回還沒實作"}
+	// MSCW 裡的 E_Rec 與目前的不同就是跨段返回，要先把段換回去。
+	if erec := s.Load(mp + 6); erec != s.ERec {
+		if s.Env == nil {
+			return &Fault{s.IPC, "沒有 Environment，跨段返回做不了"}
+		}
+		back, err := s.Env.ByERec(erec)
+		if err != nil {
+			return err
+		}
+		s.enter(back)
 	}
 	s.SP = mp - 2
 	s.pop()          // [MP−2]：原版把它放進 di 就沒再用
@@ -500,7 +628,7 @@ func (s *State) returnFrom(paramBytes uint16) error {
 	newMP := s.pop() // MSDYN
 	s.Local = newMP + 8
 	s.IPC = s.pop()  // MSIPC
-	s.Env = s.pop()  // MSENV
+	s.pop()          // MSENV：段已經換回去了，這裡只是把它丟掉
 	s.Proc = s.pop() // MSPROC
 	s.SP += paramBytes
 	return nil

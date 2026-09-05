@@ -173,3 +173,125 @@ func TestParityAgainstTheOriginal(t *testing.T) {
 		t.Logf("停下來的原因：%v", res.Err)
 	}
 }
+
+// TestSegmentResolutionMatchesTheOriginal 驗跨段呼叫那一層。
+//
+// 判準不是「我們算得出一個數字」，是**算出來的與原版切過去之後的一模一樣**：
+// 程式碼段的內容、全域資料基底、程序字典、常數池、E_Rec 五項。
+//
+// 這一條特別重要，因為 Seg_Base 怎麼換算成段值是量出來的，不是手冊寫的
+// （PLAN.md 開放項目 #2）。量錯的症狀是「跳進另一段的中間」，不會報錯。
+func TestSegmentResolutionMatchesTheOriginal(t *testing.T) {
+	s := bootToPME(t)
+	checked := 0
+	for i := 0; i < 20000 && checked < 3; i++ {
+		rows, err := s.Trace(1, traceBudget)
+		if err != nil || len(rows) == 0 {
+			break
+		}
+		op := rows[0].Op
+		if !((op >= 0x70 && op <= 0x77) || (op >= 0x93 && op <= 0x95)) {
+			continue
+		}
+		before := s.Regs()
+		seg := uint16(op) - 0x6f
+		if op >= 0x93 {
+			seg = uint16(s.CodeSegment(rows[0].Seg, int(rows[0].IPC)+2)[rows[0].IPC+1])
+		}
+
+		want, err := s.ResolveSegment(seg)
+		if err != nil {
+			t.Logf("段 %d 解不開（%v）——原版會發 segment fault 去載入，跳過", seg, err)
+			continue
+		}
+		if _, err := s.Trace(1, traceBudget); err != nil {
+			break
+		}
+		after := s.Regs()
+		if after.ERec == before.ERec {
+			continue // 沒有真的換段（段 1 走內嵌的機器碼）
+		}
+		checked++
+
+		live := s.CodeSegment(after.DS, 64)
+		if string(want.Code[:64]) != string(live) {
+			t.Errorf("段 %d：算出來的程式碼與原版切到的那一段不同", seg)
+		}
+		for _, c := range []struct {
+			name      string
+			want, got uint16
+		}{
+			{"E_Rec", after.ERec, want.ERec},
+			{"全域基底", after.EnvData + 8, want.Global},
+			{"程序字典", after.ProcDict, want.ProcDict},
+			{"常數池", after.ConstPool, want.ConstPool},
+		} {
+			if c.want != c.got {
+				t.Errorf("段 %d 的%s：原版 %04X，我們算出 %04X", seg, c.name, c.want, c.got)
+			}
+		}
+		t.Logf("段 %d：程式碼段 %04X、字典 %04X、常數池 %04X、E_Rec %04X，五項全同",
+			seg, after.DS, want.ProcDict, want.ConstPool, want.ERec)
+	}
+	if checked == 0 {
+		t.Skip("這段軌跡裡沒有真的換段的呼叫")
+	}
+}
+
+// TestParityAcrossASegmentSwitch 讓對拍實際走過一次真的換段。
+//
+// `TestParityAgainstTheOriginal` 從開機那一刻展開，第一個碰到的跨段呼叫是
+// 段 1 的內嵌原生碼，所以走不到換段那條路。這裡改成**先把原版推到
+// 下一條就是真換段的地方**再展開——同樣是逐條對拍，只是起點挑過。
+func TestParityAcrossASegmentSwitch(t *testing.T) {
+	s := bootToPME(t)
+	found := false
+	for i := 0; i < 20000 && !found; i++ {
+		rows, err := s.Trace(1, traceBudget)
+		if err != nil || len(rows) == 0 {
+			break
+		}
+		r := rows[0]
+		op := r.Op
+		if !((op >= 0x70 && op <= 0x77) || (op >= 0x93 && op <= 0x95)) {
+			continue
+		}
+		// 運算元：SCXG 的段號編在 opcode 裡，其餘的段號在第一個位元組。
+		code := s.CodeSegment(r.Seg, int(r.IPC)+3)
+		seg, proc := uint16(op)-0x6f, uint16(code[r.IPC+1])
+		if op >= 0x93 {
+			seg, proc = uint16(code[r.IPC+1]), uint16(code[r.IPC+2])
+		}
+		if seg == 1 && s.IsIntrinsic(proc) {
+			continue // 內嵌原生碼，不換段
+		}
+		if _, err := s.ResolveSegment(seg); err != nil {
+			continue // 段不在記憶體，原版會先去載入
+		}
+		found = true
+
+		before := s.Regs().ERec
+		res, err := s.Parity(200, traceBudget)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Diverge != nil {
+			t.Fatalf("跨段呼叫走了 %d 條之後對不上：%v", res.Steps, res.Diverge)
+		}
+		if res.Steps == 0 {
+			t.Fatalf("一條都沒走成：%v", res.Err)
+		}
+		after := s.Regs().ERec
+		if after == before {
+			t.Fatalf("走了 %d 條，E_Rec 還是 %04X——沒有真的換段", res.Steps, before)
+		}
+		t.Logf("從 %02X（段 %d、程序 %d）展開：%d 條逐條一致，E_Rec %04X → %04X",
+			op, seg, proc, res.Steps, before, after)
+		if res.Err != nil {
+			t.Logf("停下來的原因：%v", res.Err)
+		}
+	}
+	if !found {
+		t.Skip("這段軌跡裡沒有真換段又不是內嵌原生碼的呼叫")
+	}
+}
