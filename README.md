@@ -1,12 +1,119 @@
 # Parhelion PME
 
-幻日 —— UCSD p-System p-machine 的重製，以及它的知識庫。
+幻日 —— 用 Go 重做的 UCSD p-System，以及支撐它的知識庫。
 
-`SYSTEM.PME.86` 是 1984 年 DOS 版 UCSD p-system 的 p-machine 直譯器，16384 個位元組。
-這個 repo 做兩件事：**把它逐支拆開寫清楚**，然後**照著這些結論用 Go 重做一台**。
+一片 1984 年的 `.VOL` 磁碟映像丟進去，p-System 自己開到命令列，
+按鍵有反應，Filer 列得出目錄。**沒有原版直譯器，沒有 DOS，沒有 8086 模擬器。**
 
-知識庫在前，實作在後。理由很直接——沒有寫下來的理解會在寫程式的過程中
-悄悄變成猜測，而猜測看起來和知識長得一模一樣。
+```
+$ go run ./cmd/boot -vol PSYSTEM.VOL
+Copyright 1979 U.C. Regents; Copyright 1985 SofTech Microsystems
+Startup Utility - [1R1.0]
+PSYSTEM:SYSTEM.MISCINFO ---> RAMDISK:SYSTEM.MISCINFO
+PSYSTEM:SYSTEM.PASCAL   ---> RAMDISK:SYSTEM.PASCAL
+PSYSTEM:SYSTEM.EDITOR   ---> RAMDISK:SYSTEM.EDITOR
+PSYSTEM:SYSTEM.FILER    ---> RAMDISK:SYSTEM.FILER
+PSYSTEM:SYSTEM.LIBRARY  ---> RAMDISK:SYSTEM.LIBRARY
+Root is RAMDISK
+Prefix is RAMDISK
+SYSTEM.PASCAL is on RAMDISK
+Command: E(dit, R(un, F(ile, C(omp, L(ink, X(ecute, A(ssem,? [IV.2.1 R3.3]
+
+走了 226624 條，停在等鍵盤
+```
+
+那五行 `--->` 是作業系統**自己**把系統檔複製到記憶體磁碟上。
+打字進去它會動：
+
+```
+$ go run ./cmd/boot -vol PSYSTEM.VOL -keys $'FLRAMDISK:\r'
+Filer: L(dir, R(em, C(hng, T(rans, D(ate, Q(uit, B(ad-blks, E(xt-dir,? [6R4.0]
+Dir listing of what vol ? RAMDISK:
+
+RAMDISK:
+SYSTEM.MISCINFO    2  2-Sep-90           SYSTEM.PASCAL    136 14-Jan-85
+SYSTEM.EDITOR    106  9-Dec-85           SYSTEM.FILER      45 20-Dec-84
+SYSTEM.LIBRARY   102 27-Dec-84
+5/5 files<listed/in-dir>, 397 blocks used, 353 unused, 353 in largest
+```
+
+## 這台機器現在做得到什麼
+
+| | |
+|---|---|
+| 執行 p-code | **210 個指令全部實作**，包含浮點、集合、packed 欄位、字串 |
+| 跨段呼叫與返回 | 九族呼叫指令、`EXIT` 拆框走 EXITIC、activity 與參考計數 |
+| 多工 | 號誌、ready queue、依優先權換 task |
+| 段載入 | 段不在記憶體就發 segment fault，叫醒作業系統的載入 task 去磁碟讀 |
+| 磁碟 | `.VOL` 映像讀寫、目錄解析、記憶體磁碟 |
+| 主控台 | 輸出照收，輸入沒東西就交回去等，補上字再從同一條指令繼續 |
+| 開機 | 從磁碟把作業系統的起始段載進來，擺好 SIB／E_Rec／E_Vec／TIB／第一個活動記錄 |
+
+跑得動的東西：p-System 的 **Startup Utility** 與 **Filer**（列目錄、換磁碟區）。
+
+## 界線在哪裡
+
+界線不是我畫的，是原版自己畫的——直譯器有一張 48 格的表
+（映像 `0x1F56`），列出「這一支不是 p-code，是宿主的機器碼」。
+
+| 這一側 | 誰做 | 狀態 |
+|---|---|---|
+| 210 個 p-code 指令 | `internal/pmachine` | 全部 |
+| 段 1 的內嵌原生程序 | `internal/psystem` | 相異 26 支裡做了 21 支 |
+| 磁碟、主控台、時鐘、記憶體磁碟 | `internal/psystem` | 開機與 Filer 用得到的都有 |
+| `NAT`（程式碼段裡的 8086 機器碼） | — | **結構上做不到**，要一台 8086 |
+
+還沒做的原生程序：`31`／`33`（裝置模式碼 3）、`32`、`37`、
+`47`（換一組浮點常式——它會改寫 `0x1F56` 那張表本身）。整段開機不需要它們。
+
+其他還沒補的：
+
+- **`SYSTEM.CONFIG` 是照搬的。** 那 14,848 個位元組是裝置組態，
+  我們原封不動載進記憶體，但沒有解析它。
+- **`bootstrap` 的一部分初值是量到的常數**，不是推導出來的規則
+  （`internal/psystem/machine.go` 的 `bootWords`）。
+- **unit 128（DOS 主機的檔案系統閘道）只照量到的行為回答。** 協定沒解。
+- 主控台是純位元組串，**沒有終端機模擬**——`<ESC>H`、`<ESC>Y` 這些游標控制
+  原樣留在輸出裡。
+
+## 怎麼確定它是對的
+
+四個指標，各問不同的問題。**前兩個不需要原版**：
+
+| 測試 | 問什麼 | 現在 |
+|---|---|---|
+| `TestBootReachesTheCommandLine` | 有沒有開起來 | 開到命令列，停在等鍵盤 |
+| `TestFilerListsTheRAMDisk` | 用不用得動 | `F` → `L` → 列出五個檔案 |
+| `TestSelfBootMatchesTheOriginal` | 跑出來的 p-code 一不一樣 | **226,623 條逐條相同**，整段開機 |
+| `TestSelfBootInitialStateDiff` | 開機那一刻的狀態建對了沒 | 409 段不同，其中 397 段是宿主的機器碼 |
+
+後兩個把原版擺在旁邊逐條對——這是這個專案的方法，也是名字的由來。
+另外還有一組**共生對拍**：讓原版驅動，我們跟著走，
+每一條比 `IPC`、`SP`、`TOS`、`E_Rec` 四項：
+
+```
+$ tools/go.sh run -tags oracle ./cmd/parity -pme .../SYSTEM.PME.86
+兩邊一致地走了 224999 條 p-code
+另有 1624 條交給原版自己走（宿主的工作，**沒有驗證**）： 70 SCXG1×1617 94 CXG×7
+停下來的原因： oracle: 原版沒有再執行 p-code（多半停在等輸入的迴圈）
+
+用到 173 種 opcode：…
+```
+
+交出去的那 1,624 條是 p-machine 依定義就該交出去的兩種：段 1 的內嵌原生程序、
+段還沒載入。**p-code 指令沒實作不算**——那種也放行的話，
+「還沒做」會看起來像「做完了」。
+
+一個順帶的獨立交叉驗證：Filer 列出來的日期 `2-Sep-90`、`14-Jan-85`、`20-Dec-84`，
+與磁碟上 `daccess` 欄位（`B429`、`AAE1`、`A94C`）用我們自己的解碼器算出來的
+逐一對得上——**兩邊獨立，答案相同。**
+
+### 對拍沒說到的地方
+
+- **173 種 opcode 被走過，其餘 37 種一次都沒碰到**（浮點 16 支是最大一塊——
+  作業系統開機不算實數）。那些只有單元測試撐著，而單元測試與實作同源。
+- 對拍比的是四個純量，不是整個堆疊。**寫錯了堆疊深處而後來沒有人讀它**，
+  這種錯抓不到。
 
 ## 名字
 
@@ -25,7 +132,40 @@
 `86` 是 8086。名字紀念的是起點；**題目是 1984 年 DOS 版的 8086 直譯器，
 不是 SunDog 那份 68000 直譯器。**
 
-## 從哪開始讀
+## 怎麼跑
+
+`tools/go.sh` 把 Go 包在 docker 裡，`tools/ci.sh` 是本機 CI。
+需要外部素材的檢查會跳過，**而且會說它跳過了**。
+
+```sh
+tools/ci.sh                                   # 只跑不需要素材的部分
+
+PARHELION_CODEFILE=/src/workplace/SYSTEM.PASCAL \
+PARHELION_ORIG=~/cht/p-code/psys21/"psystem 1984" \
+PARHELION_PME=/src/workplace/SYSTEM.PME.86 \
+PARHELION_DOSGOLEM=~/cht/dosgolem-psys \
+  tools/ci.sh                                 # 全部
+```
+
+原版素材（`.VOL`、`PSYSTEM.COM`、抽出來的 `SYSTEM.PME.86`）由使用者自備，
+缺檔就跳過——**不自製代用品**，安靜的替代品會讓「還沒驗」看起來像「驗過了」。
+
+| 指令 | 做什麼 |
+|---|---|
+| `cmd/boot` | 吃一片 `.VOL`，把 p-System 開起來 |
+| `cmd/parhelion` | 讀 codefile：段字典、常式表、byte sex |
+| `cmd/pcode` | 反組譯一段 p-code |
+| `cmd/parity` | 共生對拍（要 `-tags oracle`）|
+| `cmd/bootdump`／`cmd/whowrote`／`cmd/ioprobe`／`cmd/hostprobe`／`cmd/segprobe` | 量原版實際行為的探針（要 `-tags oracle`）|
+
+對拍那一層底下是 [`dosgolem`](https://github.com/wicanr2/dosgolem)——同一個作者的
+無頭決定性 DOS 執行器。`oracle/` 認得 p-machine（怎麼定位直譯器、怎麼判斷
+dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
+**跑起來的那一側不 import 它**：原版只出現在測試裡。
+
+## 知識庫
+
+實作是照著這些結論寫的，不是反過來。
 
 1. [取指令與分派](docs/10-interpreter/dispatch-and-threading.md)
    — 一台沒有主迴圈的直譯器。dispatch 表怎麼在沒有位移的間接跳躍下被找出來。
@@ -38,191 +178,16 @@
 5. [256 格對照表](docs/10-interpreter/opcode-map.md)
    — 逐格：IV.0 助記符、常式偏移、指令數。
 
-## 格式
+格式：[`.VOL` 磁碟映像](docs/20-formats/vol-image.md)、
+[`SYSTEM.PME.86` 的檔頭](docs/20-formats/pme86-header.md)。
 
-- [`.VOL` 磁碟映像](docs/20-formats/vol-image.md) — 目錄版面與抽檔。
-- [`SYSTEM.PME.86` 的檔頭](docs/20-formats/pme86-header.md) — 前 18 個 word，部分已解。
+重做：[可行性評估](docs/30-remake/feasibility.md)、
+[spec 閘門](docs/30-remake/spec-workflow.md)、
+[spec 01 codefile](docs/30-remake/specs/01-codefile.md)（`CONFORMED`）、
+[spec 02 執行核心](docs/30-remake/specs/02-pmachine-core.md)（`CONFORMED`）、
+[spec 03 自己開機](docs/30-remake/specs/03-boot.md)（`DRAFT`）。
 
-## 重做
-
-- [可行性評估](docs/30-remake/feasibility.md) — 六層盤點、oracle 迴路、四個里程碑。
-- [spec 閘門](docs/30-remake/spec-workflow.md) — `DRAFT` → `READY` → `CONFORMED`。
-- [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — `CONFORMED`。
-- [spec 02：p-machine 執行核心](docs/30-remake/specs/02-pmachine-core.md) — `CONFORMED`。
-- [spec 03：自己開機](docs/30-remake/specs/03-boot.md) — `DRAFT`。
-
-**M0 做完。M1：210 個指令全部實作，對拍走完整段開機——224,987 條 p-code
-與原版逐條一致，0 個分歧。M2 開工：不靠原版也不靠 DOS，
-[自己從磁碟映像開機](docs/30-remake/specs/03-boot.md)——**開到命令列**，
-226,623 條 p-code 與原版逐條相同。
-跨段呼叫已完成並驗過**——45 次換段逐一與原版對過，對拍實際走過一次換段。
-
-```
-$ go run ./cmd/boot -vol PSYSTEM.VOL -n 400000
-磁碟 "PSYSTEM"，起始段 USERPROG（block 1、3831 words、41 支常式）
-起點 IPC 1AB8  SP D7C2  MP D7C2  E_Rec D7D2
-
-主控台收到 507 個位元組：
-<ESC>H<ESC>E<ESC>Y8 Copyright 1979 U.C. Regents; Copyright 1985 SofTech Microsystems
-Startup Utility - [1R1.0]
-PSYSTEM:SYSTEM.MISCINFO ---> RAMDISK:SYSTEM.MISCINFO
-PSYSTEM:SYSTEM.PASCAL   ---> RAMDISK:SYSTEM.PASCAL
-...
-Root is RAMDISK
-Prefix is RAMDISK
-SYSTEM.PASCAL is on RAMDISK
-Command: E(dit, R(un, F(ile, C(omp, L(ink, X(ecute, A(ssem,? [IV.2.1 R3.3]
-```
-
-**這一段沒有經過原版，也沒有經過 DOS。** 一片 `.VOL` 進去，p-System 自己開起來，
-而且整段開機的 226,623 條 p-code 與原版逐條相同。
-
-打字進去它會動：
-
-```
-$ go run ./cmd/boot -vol PSYSTEM.VOL -keys $'FLRAMDISK:\r'
-Filer: L(dir, R(em, C(hng, T(rans, D(ate, Q(uit, B(ad-blks, E(xt-dir,? [6R4.0]
-Dir listing of what vol ? RAMDISK:
-
-RAMDISK:
-SYSTEM.MISCINFO    2  2-Sep-90           SYSTEM.PASCAL    136 14-Jan-85
-SYSTEM.EDITOR    106  9-Dec-85           SYSTEM.FILER      45 20-Dec-84
-SYSTEM.LIBRARY   102 27-Dec-84
-5/5 files<listed/in-dir>, 397 blocks used, 353 unused, 353 in largest
-```
-
-那五個檔案是**作業系統自己在開機時複製到記憶體磁碟上的**。
-
-```
-$ go run ./cmd/parhelion codefile -r SYSTEM.PASCAL
-69632 位元組（136 blocks），28 個 segment
-Copyright 1979 U.C. Regents; Copyright 1985 SofTech Microsystems
-
-段名        blk  words  段號  種類        機器        版本  sex  常數池   R  常式  無碼  外層
-KERNEL    16   2150   1   Unit_Seg  M_Psuedo  IV  同    1918  4  66  26
-GOTOXY    25   63     2   Unit_Seg  M_Psuedo  IV  同    58    4  2   0
-...
-合計 465 支常式，其中 35 支沒有碼；6 個 segment 的 byte sex 與主機相反
-```
-
-最後那一行是這一輪最值得記的發現：**作業系統自己的 codefile 裡就混著兩種位元組序。**
-
-**原版跑得起來了**，可以當差分測試的 oracle。底下是
-[`dosgolem`](https://github.com/wicanr2/dosgolem)——同一個作者的無頭決定性
-DOS 執行器。`oracle/` 這一層認得 p-machine（怎麼定位直譯器、怎麼判斷
-dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
-
-```
-=== oracle：把原版跑起來
---- PASS: TestLoaderMovesTheDispatchTableToOffsetZero
-      映像基底 01400h，dispatch 表 512／512 byte 相同
---- PASS: TestExecutedCodeMatchesWhatTheReaderParses
-      段 "USERPROG"：記憶體 1251h，檔案 block 1、3831 words、41 支常式
-      400 條 p-code 的 opcode 與 codefile 逐位元組相同
-```
-
-對拍逐條比 `IPC`、`SP`、`TOS`：
-
-```
-$ tools/go.sh run -tags oracle ./cmd/parity -pme .../SYSTEM.PME.86
-兩邊一致地走了 224999 條 p-code
-另有 1624 條交給原版自己走（宿主的工作，**沒有驗證**）： 70 SCXG1×1617 94 CXG×7
-停下來的原因： oracle: 原版沒有再執行 p-code（多半停在等輸入的迴圈）
-
-用到 173 種 opcode：…
-```
-
-停下來是因為**原版沒事做了**——開機跑完，系統停在等鍵盤的迴圈。
-
-交給原版走的 1,624 條是 p-machine 依定義就要交出去的：段 1 的內嵌原生程序，
-以及段還沒載入。
-**p-code 指令沒實作不算**，不然「還沒做」會看起來像「做完了」。
-
-軌跡讀起來就是 Pascal：
-
-```
-1251:0B08 23 SLDL4     1251:0AFA 21 SLDL2
-1251:0B09 26 SLDL7     1251:0AFB 98 LDCN
-1251:0B0A B2 LEQI      1251:0AFC B1 NEQI
-1251:0B0B D5 FJPL      1251:0AFD D5 FJPL
-```
-
-左邊是迴圈條件，右邊是 `while p <> nil`。
-
-## 自評：這台機器現在到什麼程度
-
-結論先講：**能逐條跑 p-code，還不能自己開機。**
-它目前是掛在原版旁邊的第二顆太陽——正確性由原版定義，也還離不開原版。
-
-### 這個數字證明了什麼
-
-12,924 條不是為了跑分寫的測試程式，是**作業系統自己的開機碼**。
-一路上有跨段呼叫、packed 欄位、集合、字串比較、`XJP` 跳表，
-每一條都比對 `IPC`、`SP`、`TOS` 三項，45 次換段另外比對四項。
-沒有預設哪些指令會出現，出現什麼就得對什麼。
-
-### 這個數字沒有證明什麼
-
-**用到的是 130 種 opcode，剩下 80 種對拍一次都沒碰到。**
-開機路徑不需要它們——作業系統開機不算實數：
-
-| 沒被對拍走過的 | 幾支 | 現在靠什麼撐著 |
-|---|---:|---|
-| 浮點 | 16 | 單元測試 + 讀原版的浮點助手 |
-| 跨段呼叫的其餘形式（`CXL`／`CXG`／`CXI`／`CPF`／`CPI`） | 5 | 單元測試；只有 `SCXG1`／`SCXG2` 被實際走過 |
-| 集合與字串比較（`EQPWR`／`LEPWR`／`GEPWR`／`INN`／`LESTR`／`GESTR`） | 6 | 單元測試 |
-| `DVI`／`MODI`／`CHK`／`ABI`／`SWAP`／`NOP`／`BPT` 等零星 | 其餘 | 單元測試 |
-
-**單元測試不是獨立證據**——它和實作出自同一份理解，我讀錯原版的話兩邊會一起錯。
-真正的證據是對拍，而對拍對這 80 支還沒說過話。
-
-另外，對拍比的是三個純量，不是整個堆疊與資料段。
-**寫錯了堆疊深處、而後來沒有人讀它**，這種錯抓不到。
-
-### 還差多少才算「一台能用的 p-machine」
-
-| 缺的東西 | 現況 |
-|---|---|
-| 段 1 的 26 支內嵌原生程序 | 對拍時交給原版走；自己跑就沒有 |
-| `CSP`（檔案系統、主控台、磁碟） | 同上 |
-| 從磁碟把 segment 載進 codepool | 沒做。碰到不在記憶體的段就回 `ErrNotResident` |
-| 換 task 的排程器 | 只做了號誌的非阻塞路徑 |
-| `NAT` | 要一台 8086 才做得到，不是寫 p-code 能補的 |
-
-前三項是同一件事的三個面向：**這台 p-machine 還沒有作業系統。**
-`SYSTEM.PASCAL` 是 p-code 寫的，原則上跑得起來，
-但它一開口就要檔案系統，而檔案系統在直譯器的機器碼裡。
-
-### 最花力氣的不是那 210 支指令
-
-是建立一條**能逐條問「你錯在哪」的迴路**。指令本身多半半小時一支，
-而迴路一旦建好，錯誤會自己報上位置。
-
-一個具體例子值得記：Go **不定義 `a + b` 的求值順序**，
-`s.IPC + 1 + int16(s.fetch())` 裡的 `s.fetch()` 可能先跑，`s.IPC` 就多讀了一個位元組。
-所有跳躍指令因此差一格。單元測試抓不到——我寫測試時用的是同一個錯誤理解，
-期望值跟著錯。**對拍在第 101 條就把它指出來了**，因為原版不會跟著我一起錯。
-
-這是差分測試相對單元測試的價值：**它的期望值不是我寫的。**
-
-## 怎麼跑
-
-`tools/go.sh` 把 Go 包在 docker 裡，`tools/ci.sh` 是本機 CI。
-需要外部東西的檢查會跳過，**而且會說它跳過了**。
-
-```sh
-tools/ci.sh                                   # 只跑不需要素材的部分
-
-PARHELION_CODEFILE=/src/workplace/SYSTEM.PASCAL \
-PARHELION_ORIG=~/cht/p-code/psys21/"psystem 1984" \
-PARHELION_PME=/src/workplace/SYSTEM.PME.86 \
-PARHELION_DOSGOLEM=~/cht/dosgolem-psys \
-  tools/ci.sh                                 # 全部
-```
-
-單元測試用的是合成的 codefile，不含任何原版資料。原版素材（`.VOL`、
-`PSYSTEM.COM`、抽出來的 `SYSTEM.PME.86`）由使用者自備，缺檔就跳過——
-**不自製代用品**，安靜的替代品會讓「還沒驗」看起來像「驗過了」。
+分輪進度、被推翻的舊斷言、開放項目清單都在 [`PLAN.md`](PLAN.md)。
 
 ## 工具
 
@@ -259,8 +224,8 @@ p-machine 的通則、指令編碼、程序呼叫的第一性原理推導在
   其餘只做過表層級的統計。
 - 反組譯的結束判準是第一個無條件轉移，所以每支只涵蓋主路徑，
   跳過去之後的碼要另外追。
-- Go 實作 210 支指令全有，但**對拍只走過其中 130 支**；其餘只有單元測試，
-  而單元測試與實作同源。見上面的自評。
+- 開機走的是**這一片磁碟、這一套裝置組態**。換一片磁碟或換一套組態
+  會走到還沒驗過的路上。
 
 ## 授權
 

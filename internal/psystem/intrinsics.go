@@ -46,9 +46,9 @@ func (m *Machine) intrinsic(proc uint16, at, sp uint16) error {
 		for i := int16(0); i < n; i++ {
 			s.Data[dst+uint16(i)] = ch
 		}
-	case 18: // UNITREAD @0x2C5A
+	case 18, 40: // UNITREAD @0x2C5A
 		return m.unitIO(true, at, sp)
-	case 19: // UNITWRITE @0x2C5F
+	case 19, 41: // UNITWRITE @0x2C5F
 		return m.unitIO(false, at, sp)
 
 	case 4: // 照 relocation list 修剛載入那一段 @0x1B2A
@@ -171,6 +171,10 @@ func nativeName(proc uint16) string {
 
 	case 31, 42, 33, 43:
 		return "裝置模式碼 3（清除？）@0x2BF1／@0x2BF7"
+	case 32:
+		return "還沒讀 @0x2826"
+	case 37:
+		return "還沒讀 @0x1C0B"
 
 	case 24:
 		return "從池內段搬進資料段 @0x1A6E"
