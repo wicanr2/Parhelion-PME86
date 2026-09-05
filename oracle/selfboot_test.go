@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/wicanr2/Parhelion-PME86/internal/pcode"
@@ -22,8 +23,8 @@ const (
 	//
 	// 下限釘住的是**開機狀態不能建錯**。走不完不是這個測試的失敗——
 	// 那表示 bootstrap 還有沒重建出來的東西，而那是下一輪的工作。
-	selfBootWant  = 300_000
-	selfBootFloor = 40_000
+	selfBootWant  = 400_000
+	selfBootFloor = 226_000
 )
 
 func TestSelfBootMatchesTheOriginal(t *testing.T) {
@@ -59,8 +60,14 @@ func TestSelfBootMatchesTheOriginal(t *testing.T) {
 			break
 		}
 		rows, terr := s.Trace(1, traceBudget)
-		if terr != nil || len(rows) == 0 {
-			t.Fatalf("原版在第 %d 條停了：%v", steps, terr)
+		if terr != nil {
+			t.Fatalf("原版在第 %d 條出錯：%v", steps, terr)
+		}
+		if len(rows) == 0 {
+			// **這不是失敗。** 原版開機跑完就停在等鍵盤的迴圈，
+			// 走到這裡表示整段開機都逐條對過了。
+			t.Logf("原版沒事做了——整段開機都走完，共 %d 條", steps)
+			break
 		}
 		r := rows[0]
 		bad := ""
@@ -129,22 +136,49 @@ func TestSelfBootInitialStateDiff(t *testing.T) {
 	}
 
 	diff := s.DataDiff(m.S, 4000)
-	for i, d := range diff {
-		if i >= 30 {
-			t.Logf("  …還有 %d 段", len(diff)-i)
+	// 分開數。有兩塊是 **8086 機器碼**，我們的宿主是 Go，本來就不會有：
+	//
+	//   0x0192–0x06EF  bootstrap 從直譯器映像 0x3AA2 搬進來的原生驅動
+	//   0x42F0–0x5010  DOS 的 PSP 與 PSYSTEM.COM 自己（它常駐著服務 NAT）
+	//
+	// **這兩塊永遠歸不了零**，所以分開數；要處理它們是用 Go 重做那些服務。
+	native := 0
+	var rest []string
+	for _, d := range diff {
+		var lo uint32
+		if _, err := fmt.Sscanf(d, "%05X", &lo); err != nil {
+			continue
+		}
+		if (lo >= 0x0192 && lo < 0x06F0) || (lo >= 0x42F0 && lo <= 0x5010) {
+			native++
+			continue
+		}
+		rest = append(rest, d)
+	}
+	t.Logf("扣掉宿主的機器碼，還有 %d 段真的沒建：", len(rest))
+	for i, d := range rest {
+		if i >= 40 {
+			t.Logf("  …還有 %d 段", len(rest)-i)
 			break
 		}
 		t.Log("  ", d)
 	}
-	// 分開數：`0x0192`–`0x06EF` 那一段是 bootstrap 從直譯器映像搬進來的
-	// **8086 機器碼**（作業系統用 `NAT` 呼叫它）。我們的宿主是 Go，
-	// 那一塊本來就不會有——**這個指標永遠歸不了零**，要分開看。
-	native := 0
+	// 依 4 KB 分group，才看得出「還沒建的東西集中在哪」——
+	// 一段一段看只會看到樹。
+	bucket := map[uint32]int{}
 	for _, d := range diff {
 		var lo uint32
-		if _, err := fmt.Sscanf(d, "%05X", &lo); err == nil && lo >= 0x0192 && lo < 0x06F0 {
-			native++
+		if _, err := fmt.Sscanf(d, "%05X", &lo); err == nil {
+			bucket[lo&^0xFFF]++
 		}
+	}
+	keys := make([]uint32, 0, len(bucket))
+	for k := range bucket {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	for _, k := range keys {
+		t.Logf("  %04X 起這 4 KB：%d 段", k, bucket[k])
 	}
 	t.Logf("開機那一刻資料段有 %d 段不同，其中 %d 段是原生驅動的機器碼",
 		len(diff), native)

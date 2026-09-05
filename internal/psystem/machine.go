@@ -3,6 +3,7 @@ package psystem
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/wicanr2/Parhelion-PME86/internal/codefile"
 	"github.com/wicanr2/Parhelion-PME86/internal/pmachine"
@@ -21,6 +22,8 @@ const (
 	codeBase       = 0xD800             // 開機那一段程式碼在資料段裡的位置
 	sysCom         = 0x00E6             // SYSCOM：單元表與 I/O 狀態
 	bootUnit       = 14                 // 開機磁碟的 unit 編號
+	ramDiskUnit    = 13                 // 記憶體磁碟
+	ramDiskBlocks  = 750                // 量原版量到的大小
 	stackTop       = 0xFFFE             // 資料段的上緣，也是 TIB 記的堆疊上界
 	dirBase        = stackTop - 4*Block // 磁碟目錄：4 塊
 	dictBase       = dirBase - Block    // 作業系統 codefile 的 segment dictionary：1 塊
@@ -29,6 +32,7 @@ const (
 	configWorkBase = 0x06F0             // 它的前 5 塊，另一份
 	configWork     = 5 * Block
 	dirCache       = 0x3AF0 // 目錄的第二份，作業系統自己用。位置是量到的
+	dirCache2      = 0xBEEE // 第三份，同上
 )
 
 // Machine 是一台自己跑得起來的 p-System：平坦記憶體 ＋ p-machine ＋ 磁碟。
@@ -52,6 +56,7 @@ type Machine struct {
 	// 出錯的地方與看到症狀的地方通常隔了幾千條指令。
 	IOLog []string
 
+	Faults  int    // 發生過幾次 segment fault
 	Console []byte // 寫到主控台的位元組
 	Keys    []byte // 還沒被讀走的鍵盤輸入
 }
@@ -103,6 +108,12 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	if err != nil {
 		return nil, err
 	}
+	osFirst := 0
+	for _, f := range v.Files {
+		if strings.EqualFold(f.Name, osFile) {
+			osFirst = f.First
+		}
+	}
 	cf, err := codefile.Parse(raw)
 	if err != nil {
 		return nil, err
@@ -111,9 +122,10 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	// 起始段是檔案裡**排在最前面**的那一段（block 1，緊接著 dictionary）。
 	// 連結器把作業系統的外層程式擺在這裡，bootstrap 不必查 dictionary 就讀得到。
 	var boot *codefile.Segment
-	for _, s := range cf.Segments {
+	bootIdx := 0
+	for i, s := range cf.Segments {
 		if boot == nil || s.Block < boot.Block {
-			boot = s
+			boot, bootIdx = s, i
 		}
 	}
 	if boot == nil {
@@ -146,7 +158,10 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	m.setWord(sib+2, codeBase) //           池內偏移
 	m.setWord(sib+4, 1)        // Ref_Count
 	m.setWord(sib+6, 0)        // Activity
-	m.setWord(sib+20, uint16(boot.Words+1))
+	m.setWord(sib+20, uint16(boot.Words)+uint16(boot.Words&1))
+	// +16h 是這一段在**磁碟上**的塊號：codefile 的起點加上段內塊號。
+	// 之後要重新載入這一段就靠它（原生程序 39 讀的就是這一格）。
+	m.setWord(sib+0x16, uint16(osFirst+boot.Block))
 	m.setWord(erec+0, stateBase) // Env_Data
 	m.setWord(erec+2, evec)      // E_Vec
 	m.setWord(erec+4, sib)       // SIB
@@ -183,9 +198,9 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	// 開機磁碟的目錄先讀進來，擺在資料段最上面（`0xFFFE` 往下 2048 個位元組），
 	// SYSCOM+8 指著它。作業系統一開始就在讀 `dnumfiles`。
 	if dir := v.Blocks(2, 4); dir != nil {
-		// **目錄有兩份。** 一份在資料段最上面，SYSCOM+8 指著它；
-		// 另一份在 0x3AF2，作業系統自己用。兩份都要蓋上開機日期。
-		for _, at := range []uint16{dirBase, dirCache} {
+		// **目錄有三份。** 一份在資料段最上面，SYSCOM+8 指著它；
+		// 另外兩份是作業系統自己用的。三份都要蓋上開機日期。
+		for _, at := range []uint16{dirBase, dirCache, dirCache2} {
 			copy(data[at:], dir)
 			m.setWord(at+dirLastBoot, opt.Date)
 		}
@@ -207,11 +222,20 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	// 就放在目錄下面一塊。要載別的段時，(Code_Addr, Code_Leng) 就從這裡查。
 	if len(raw) >= codefile.BlockSize {
 		copy(data[dictBase:], raw[:codefile.BlockSize])
+		// 起始段那一格的 `Code_Leng` 會被進位成偶數（3831 → 3832）。
+		// 量到的，理由還沒解——但差一個 word 後面的算式就全錯。
+		at := dictBase + uint16(4*bootIdx) + 2
+		m.setWord(at, uint16(boot.Words)+uint16(boot.Words&1))
 	}
 	m.setWord(stateSysCom+0x10, dataSeg*16) // 資料段的實體位址
 	// 全域變數 1 指向 SYSCOM（系統通訊區）。作業系統一開口就要它。
 	m.setWord(stateBase+8, 1)
 	m.setWord(stateBase+10, sysCom)
+
+	// unit 13 是這台主機的記憶體磁碟，開機時是空的。
+	if rd := NewRAMDisk("RAMDISK", ramDiskBlocks); rd != nil {
+		m.Units[ramDiskUnit] = rd
+	}
 
 	seg, err := m.ByERec(erec)
 	if err != nil {
@@ -230,6 +254,9 @@ func BootWith(volume []byte, osFile string, opt Options) (*Machine, error) {
 	m.setWord(stateBase+4, entry) // 全域框記的也是同一個位址
 	m.setWord(stateTIB+0x0e, entry)
 	m.S.Enter(seg)
+	// 目前的程式碼段值（`ss:2Ah`）。8086 上是段暫存器的值，
+	// 我們沒有段暫存器，但作業系統讀得到這一格，所以照樣算出來擺著。
+	m.setWord(0x24, 0) // 存起來的 IPC：bootstrap 交棒時是 0
 	return m, nil
 }
 
@@ -276,14 +303,15 @@ func (m *Machine) ByERec(erec uint16) (*pmachine.Segment, error) {
 	}
 	ptr, off := m.word(sib), m.word(sib+2)
 	if off == 0 {
-		return nil, pmachine.ErrNotResident
+		return nil, &pmachine.NotResident{ERec: erec}
 	}
 	pool := uint16(dataSeg)
 	if ptr != 0 {
 		lo, hi := m.word(ptr), m.word(ptr+2)
 		pool = hi>>4 | (lo&0xF)<<12
 	}
-	base := (uint32(pool) + uint32(off)>>4) * 16
+	para := pool + off>>4
+	base := uint32(para) * 16
 	if int(base)+22 > len(m.Mem) {
 		return nil, fmt.Errorf("psystem: 段落在 %05Xh，超出記憶體", base)
 	}
@@ -299,6 +327,7 @@ func (m *Machine) ByERec(erec uint16) (*pmachine.Segment, error) {
 		ERec:      erec,
 		EVec:      m.word(erec + 2),
 		SIB:       sib,
+		Para:      para,
 		Flipped:   binary.LittleEndian.Uint16(code[0x0c:]) != 1,
 	}, nil
 }

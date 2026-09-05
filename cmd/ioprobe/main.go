@@ -82,6 +82,17 @@ func main() {
 		fmt.Printf("程序 %d  unit %-3d block %-5d 長度 %-5d 緩衝 %04X  mode %d  "+
 			"IORESULT %d  緩衝變了 %d／%d byte\n",
 			proc, unit, blk, length, buf, mode, s.DataWord(0xe6), changed, len(before))
+		if unit == 13 && proc == 18 {
+			n := 56
+			if len(after) < n {
+				n = len(after)
+			}
+			fmt.Printf("    出 % X\n", after[:n])
+		}
+		if unit == 128 {
+			fmt.Printf("    進 % X  %q\n    出 % X  %q\n",
+				before, string(before), after, string(after))
+		}
 		if changed > 0 {
 			fmt.Printf("    出來後前 16 byte：% X\n", after[:min(16, len(after))])
 		} else if proc == 19 && length > 0 {

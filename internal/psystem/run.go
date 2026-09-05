@@ -46,8 +46,9 @@ func (m *Machine) Step() error {
 		m.Traps[ic.Proc]++
 		return m.intrinsic(ic.Proc)
 	}
-	if errors.Is(err, pmachine.ErrNotResident) {
-		return m.segmentFault()
+	var nr *pmachine.NotResident
+	if errors.As(err, &nr) {
+		return m.segmentFault(nr.ERec)
 	}
 	return err
 }
@@ -62,8 +63,27 @@ func (m *Machine) Run(n int) (int, error) {
 	return n, nil
 }
 
-// segmentFault 是「要用的段還沒載入」。原版在這裡把 fault 交給作業系統的
-// 載入 task，那條路徑還沒做。
-func (m *Machine) segmentFault() error {
-	return fmt.Errorf("psystem: 段還沒載入，segment fault 的處理還沒做（IPC %04Xh）", m.S.IPC)
+// segmentFault 是「要用的段還沒載入」（@0x143D → @0x0273）。
+//
+// 做三件事：把 fault 的資料填進 `ss:F8h`–`ss:FEh`、`SIGNAL` 那個號誌
+// 叫醒作業系統的載入 task、然後回去重跑同一條指令——IPC 已經被
+// `Step` 退回這一條的開頭了。
+//
+// 種類碼 `0x80` 是 segment fault，`0x81` 是堆疊爆掉（@0x02B1 那條路）。
+func (m *Machine) segmentFault(erec uint16) error {
+	m.setWord(faultTask, m.word(0x3c))
+	m.setWord(faultERec, erec)
+	m.setWord(faultERec+2, erec)
+	m.setWord(faultKind, faultSegment)
+	m.Faults++
+	return m.S.Signal(faultSem)
 }
+
+// fault 的資料放在直譯器狀態區的這幾格（@0x0273 起）。
+const (
+	faultSem     = 0x00F4 // 叫醒載入 task 的號誌
+	faultTask    = 0x00F8 // 是哪個 task 出的錯
+	faultERec    = 0x00FA // 出錯的段
+	faultKind    = 0x00FE
+	faultSegment = 0x80
+)

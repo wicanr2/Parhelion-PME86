@@ -39,6 +39,9 @@ func OpenVolume(data []byte) (*Volume, error) {
 	if len(data) < (dirBlock+4)*Block {
 		return nil, fmt.Errorf("psystem: 映像只有 %d 位元組，讀不到目錄", len(data))
 	}
+	// **抄一份**。磁碟是可以寫的，而呼叫端給的那份位元組不該被我們改掉——
+	// 寫回檔案是另一件事，要做也是明確地做。
+	data = append([]byte(nil), data...)
 	d := data[dirBlock*Block:]
 	v := &Volume{ID: pstr(d[6:14]), data: data}
 	n := int(binary.LittleEndian.Uint16(d[16:]))
@@ -90,4 +93,39 @@ func pstr(b []byte) string {
 		n = len(b) - 1
 	}
 	return string(b[1 : 1+n])
+}
+
+// NewRAMDisk 造一片空的記憶體磁碟。
+//
+// 這台主機在 unit 13 掛了一片 `RAMDISK`，750 塊。**開機時上面一個檔案都沒有**
+// ——`dnumfiles` 是 0，作業系統之後才會把 `SYSTEM.MISCINFO` 寫上去。
+// 沒有這片，它會以為那台沒有磁碟，而原版是有的。
+//
+// 版面照 IV.0 手冊 p.125 的目錄格式，與 `.VOL` 完全相同，
+// 所以造出來之後就是一片普通的磁碟。
+func NewRAMDisk(name string, blocks int) *Volume {
+	img := make([]byte, blocks*Block)
+	d := img[2*Block:]
+	put := func(o int, v uint16) { binary.LittleEndian.PutUint16(d[o:], v) }
+
+	put(2, 6) // dlastblk：目錄佔到 block 6
+	d[6] = byte(len(name))
+	copy(d[7:], name)
+	put(14, uint16(blocks)) // deovblk
+	put(16, 0)              // dnumfiles：空的
+
+	v, err := OpenVolume(img)
+	if err != nil {
+		return nil
+	}
+	return v
+}
+
+// Write 把位元組寫進磁碟映像。只改記憶體裡這一份，不碰原始檔案。
+func (v *Volume) Write(off int, b []byte) bool {
+	if off < 0 || off+len(b) > len(v.data) {
+		return false
+	}
+	copy(v.data[off:], b)
+	return true
 }

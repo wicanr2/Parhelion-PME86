@@ -1,6 +1,7 @@
 package psystem
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 )
@@ -88,6 +89,37 @@ func (m *Machine) intrinsic(proc uint16) error {
 	case 39, 46: // 把一段從磁碟讀進 codepool @0x1BAF
 		return m.loadSegment()
 
+	case 38: // 用 8 個位元組的名字查一棵二元樹 @0x1CF6
+		key := s.Pop()
+		out := s.Pop()
+		node := s.Pop()
+		s.Pop() // 函式結果的位置
+		res, at := m.lookup(node, key)
+		m.setWord(out, at)
+		s.Push(uint16(res))
+
+	case 29: // ATTACH @0x1841：把號誌掛到中斷向量
+		vec := s.Pop()
+		sem := s.Pop()
+		m.setWord(vectorTable+2*vec, sem)
+
+	case 22: // SCAN @0x1992
+		s.Pop() // 函式結果的位置，最後推回去
+		at := m.popAddr()
+		ch := byte(s.Pop())
+		mode := s.Pop()
+		n := int16(s.Pop())
+		s.Pop() // @0x19A2 把它蓋掉了，沒有用到
+		s.Push(uint16(m.scan(at, ch, mode&0xFF == 0, n)))
+
+	case 36, 45: // 問裝置狀態 @0x2C1B：模式碼 8
+		ctrl := s.Pop()
+		buf := s.Pop()
+		u := s.Pop()
+		m.setWord(ioResult, m.unitStatus(u))
+		m.logIO("問 unit %d 狀態（control %04X，緩衝 %04X）→ IORESULT %d",
+			u, ctrl, buf, m.word(ioResult))
+
 	case 34, 44: // 等裝置做完 @0x2C36：模式碼 4，只吃一個 unit
 		u := s.Pop()
 		m.setWord(ioResult, m.unitStatus(u))
@@ -136,20 +168,16 @@ func nativeName(proc uint16) string {
 
 	case 14:
 		return "在兩個池內段之間搬 word @0x1AE4"
-	case 22:
-		return "SCAN @0x1992"
+
 	case 31, 42, 33, 43:
 		return "裝置模式碼 3（清除？）@0x2BF1／@0x2BF7"
-	case 36, 45:
-		return "裝置模式碼 8（狀態？）@0x2C1B"
+
 	case 24:
 		return "從池內段搬進資料段 @0x1A6E"
 	case 25:
 		return "從資料段搬進池內段 @0x1A94"
 	case 26:
 		return "把載入的段逐 word 交換位元組 @0x1ABA"
-	case 29:
-		return "ATTACH：把號誌掛到中斷向量 @0x1841"
 
 	case 47:
 		return "換一組浮點常式 @0x1A0C"
@@ -188,6 +216,9 @@ func (m *Machine) unitIO(read bool) error {
 		return nil
 	}
 	switch {
+	case unit == hostGate: // DOS 主機的檔案系統閘道
+		return m.hostRequest(buf, n, read)
+
 	case unit == 1 || unit == 2: // CONSOLE:／SYSTERM:
 		if read {
 			got := m.Keys
@@ -209,20 +240,24 @@ func (m *Machine) unitIO(read bool) error {
 			m.setWord(ioResult, r)
 			return nil
 		}
+		// 「這台裝置在」與「這台裝置有磁碟」是兩件事：unit 4 與 13 會回答
+		// 「在」，但我們沒有掛磁碟給它們。
 		v := m.Units[unit]
-		lo := int(blk) * Block
-		if !read {
-			// 寫回磁碟還沒做。**不要靜靜地當成功**——那會讓檔案系統以為
-			// 東西存下去了，而錯誤會在很久以後才以別的樣子出現。
-			m.setWord(ioResult, ioWriteProtect)
+		if v == nil {
+			m.setWord(ioResult, ioNoVolume)
 			return nil
 		}
-		src := v.data
-		if lo < 0 || lo+int(n) > len(src) {
+		lo := int(blk) * Block
+		if lo < 0 || lo+int(n) > len(v.data) {
 			m.setWord(ioResult, ioBadBlock)
 			return nil
 		}
-		copy(s.Data[buf:buf+n], src[lo:lo+int(n)])
+		if read {
+			copy(s.Data[buf:buf+n], v.data[lo:lo+int(n)])
+			return nil
+		}
+		// 寫只改記憶體裡那份映像。要不要落回檔案是使用端的決定。
+		v.Write(lo, s.Data[buf:buf+n])
 		return nil
 	}
 }
@@ -232,6 +267,25 @@ func (m *Machine) logIO(format string, a ...any) {
 	if len(m.IOLog) < 200 {
 		m.IOLog = append(m.IOLog, fmt.Sprintf(format, a...))
 	}
+}
+
+// hostRequest 是 unit 128：DOS 主機的檔案系統閘道。
+//
+// 協定還沒解開，**目前照量到的行為回答**：七個位元組的請求，
+// 驅動把第一個 word 換成 3 然後回 IORESULT 0；兩個位元組的請求原封不動，
+// 回 IORESULT 10（沒有這個檔案）。作業系統開機時拿它問 DOS 那邊有沒有檔案，
+// 得到「沒有」是正常結果。
+//
+// **這一格是「宿主答什麼」，不是「p-machine 怎麼算」**——真的要支援
+// DOS 檔案系統得先把協定解出來。
+func (m *Machine) hostRequest(buf, n uint16, read bool) error {
+	m.logIO("主機閘道：%d 個位元組 %04X（%s）", n, buf, map[bool]string{true: "讀", false: "寫"}[read])
+	if n >= 7 {
+		m.setWord(buf, hostNoDOSFiles)
+		return nil
+	}
+	m.setWord(ioResult, ioNoFile)
+	return nil
 }
 
 // unitStatus 回報這個 unit 現在能不能用。
@@ -269,6 +323,12 @@ const (
 	ioBadRequest   = 3
 	ioNoInput      = 4
 	ioNoVolume     = 9
+	ioNoFile       = 10
+	hostGate       = 128
+	hostNoDOSFiles = 3
+	// vectorTable 是中斷向量對號誌的表（`ss:4Eh` 起，上限 64 個）。
+	// 中斷來的時候直譯器就 SIGNAL 對應的那個號誌（@0x1878）。
+	vectorTable    = 0x004E
 	ioWriteProtect = 16
 )
 
@@ -403,4 +463,51 @@ func (m *Machine) relocate() error {
 				Why: fmt.Sprintf("relocation 型別 %d 是原生碼用的，還沒做", a>>8)}
 		}
 	}
+}
+
+// scan 是 `SCAN(length, partial, array)`（程序 22，@0x1992）。
+//
+// `repnz scasb`／`repz scasb` 兩條路：**mode 為 0 找相等，不是 0 找不等**
+// （@0x19AB 的 `test ah,ah`）。個數帶正負號，負的往回掃（@0x19A8 的 `jl`）。
+//
+// 回傳走了幾格，帶方向；掃完沒中就回原來的個數。
+func (m *Machine) scan(at uint16, ch byte, wantEqual bool, n int16) int16 {
+	step, count := int16(1), n
+	if n < 0 {
+		step, count = -1, -n
+	}
+	for i := int16(0); i < count; i++ {
+		if (m.S.Data[at+uint16(i*step)] == ch) == wantEqual {
+			return i * step
+		}
+	}
+	return n
+}
+
+// lookup 用 8 個位元組的名字在一棵二元樹裡找（程序 38，@0x1CF6）。
+//
+// 節點的版面：名字 8 個位元組、`+8` 是「比較小的那邊」、`+0Ah` 是另一邊
+// （@0x1D47／@0x1D38 各走一條）。回傳 0 找到、1 或 −1 是停在哪一邊沒路了，
+// 並且**不管有沒有找到都把停下來的那個節點寫回去**（@0x1D1A）。
+func (m *Machine) lookup(node, key uint16) (int16, uint16) {
+	for node != 0 {
+		cmp := bytes.Compare(m.S.Data[node:node+8], m.S.Data[key:key+8])
+		switch {
+		case cmp == 0:
+			return 0, node
+		case cmp < 0:
+			next := m.word(node + 8)
+			if next == 0 {
+				return 1, node
+			}
+			node = next
+		default:
+			next := m.word(node + 0x0A)
+			if next == 0 {
+				return -1, node
+			}
+			node = next
+		}
+	}
+	return -1, node
 }

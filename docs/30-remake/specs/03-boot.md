@@ -1,8 +1,20 @@
 # spec 03：自己開機
 
 狀態：**`DRAFT`**（見 [spec 閘門](../spec-workflow.md)）。
-已驗的部分：**自己開機走 40,619 條 p-code，與原版逐條相同，
-螢幕上出現版權字串**。
+狀態：**開到命令列了。** 一片 `.VOL` 進去，p-System 自己開起來，
+226,623 條 p-code 與原版逐條相同——那是整段開機，
+走到原版自己也停在等鍵盤的那一刻。
+
+```
+Startup Utility - [1R1.0]
+PSYSTEM:SYSTEM.MISCINFO ---> RAMDISK:SYSTEM.MISCINFO
+PSYSTEM:SYSTEM.PASCAL   ---> RAMDISK:SYSTEM.PASCAL
+...
+Root is RAMDISK
+Prefix is RAMDISK
+SYSTEM.PASCAL is on RAMDISK
+Command: E(dit, R(un, F(ile, C(omp, L(ink, X(ecute, A(ssem,? [IV.2.1 R3.3]
+```
 
 這一份講的是「不靠原版、不靠 DOS，怎麼從一片 `.VOL` 把 p-System 跑起來」。
 p-machine 本身在 [spec 02](02-pmachine-core.md)；這裡只講宿主。
@@ -145,11 +157,15 @@ bootstrap 把它整份讀進 `0x5020`，前 5 塊另外再放一份在 `0x06F0`�
 | 39／46 | `0x1BAF` | 把一段從磁碟讀進 codepool |
 
 | 20 | `0x2CB8` | `TIME(var hi, lo)`：系統時鐘，1／60 秒 |
+| 22 | `0x1992` | `SCAN`：mode 為 0 找相等、不是 0 找不等；個數帶正負號 |
+| 29 | `0x1841` | `ATTACH`：把號誌掛到 `ss:4Eh` 的中斷向量表 |
 | 34／44 | `0x2C36` | 等裝置做完（模式碼 4） |
+| 36／45 | `0x2C1B` | 問裝置狀態（模式碼 8） |
+| 38 | `0x1CF6` | 用 8 個位元組的名字查一棵二元樹（`+8` 與 `+0Ah` 是兩邊） |
 
-還沒做的：`22` `SCAN`、`29` `ATTACH`（把號誌掛到 `ss:4Eh` 的中斷向量表）、
-`31`／`33`（模式碼 3）、`36`（模式碼 8）、
+還沒做的：`31`／`33`（模式碼 3）、
 `47`（換一組浮點常式，**它會改寫 @0x1F56 那張表本身**），以及還沒讀過碼的幾支。
+整段開機不需要它們。
 
 裝置那一族其實是同一支，靠 `0x2AA0` 的模式碼分：
 1 讀、2 寫、3、4 等、8。參數塊在直譯器映像的 `0x2AA0`–`0x2AA8`。
@@ -197,8 +213,9 @@ bootstrap 把它整份讀進 `0x5020`，前 5 塊另外再放一份在 `0x06F0`�
 
 | 測試 | 釘什麼 | 現在 |
 |---|---|---|
-| `TestSelfBootMatchesTheOriginal` | 跑出來的 p-code 一不一樣 | 40,619 條逐條相同 |
-| `TestSelfBootInitialStateDiff` | 開機那一刻的狀態建對了沒 | 還有 1,982 段沒建 |
+| `TestBootReachesTheCommandLine` | **有沒有開起來**（不需要原版） | 開到命令列 |
+| `TestSelfBootMatchesTheOriginal` | 跑出來的 p-code 一不一樣 | 226,623 條，整段開機 |
+| `TestSelfBootInitialStateDiff` | 開機那一刻的狀態建對了沒 | 還有 409 段，其中 397 段是宿主的機器碼 |
 
 第一個是下限（只准往上），第二個是上限（只准往下）。
 
@@ -213,9 +230,29 @@ bootstrap 把它整份讀進 `0x5020`，前 5 塊另外再放一份在 `0x06F0`�
 <ESC>H<ESC>E<ESC>Y8 Copyright 1979 U.C. Regents; Copyright 1985 SofTech Microsystems<ESC>H
 ```
 
-停在一個還沒查清楚的地方：某個區域變數原版是 `1052`，我們是 `0002`。
-**codepool 逐位元組相同**（`MemDiff` 現在比得到），所以問題在資料段裡
-那 1,982 段還沒建出來的東西之一。
+## 7. 一路上卡住的地方
+
+每一個都值得記，因為每一個都是「照著猜會猜不到、量了就看得見」的那種：
+
+**區域變數不是空的。** 原版在配置區域資料之前會 `call` 進堆疊檢查助手
+（@0x104F），那一次 `call` 把返回位址推在舊 SP 底下——而那個位置正是
+**編號最大的那個區域變數**。開機途中就有一支 `DATASIZE` 為 1 的程序把它
+當參數傳出去。不重現那個值，第 40,619 條就對不上。
+
+**`ss:0E6h` 一格兩用。** 它同時是 `IORESULT` 與 `MSPROC` 的高位元組。
+存 task 狀態時要讀記憶體裡當下那一份，拿 struct 裡的舊值會把裝置結果吃掉。
+
+**沒掛磁碟、裝置不支援、沒有這個檔案是三個不同的答案**（9／3／10）。
+作業系統開機時把 unit 2 到 22 問一遍，答錯一個它就走上另一條路。
+
+**unit 13 是一片空的記憶體磁碟。** 750 塊、名字 `RAMDISK`、
+**開機時一個檔案都沒有**——作業系統自己會把 `SYSTEM.MISCINFO` 等五個檔案
+從開機碟複製過去，然後把根目錄切過去。少了這片，開機流程整個不一樣。
+
+**unit 128 是 DOS 主機的檔案系統閘道。** 協定還沒解，
+目前照量到的行為回答：七個位元組的請求把第一個 word 換成 3，
+兩個位元組的請求回 IORESULT 10。作業系統問「DOS 那邊有沒有檔案」，
+得到「沒有」是正常結果。
 
 ## 6. 排程器
 

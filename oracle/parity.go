@@ -63,6 +63,7 @@ func (s *System) Capture() (*pmachine.State, error) {
 		Proc:      s.M.Read16(uint32(dataSeg)*16 + 0x32),
 		ERec:      s.M.Read16(uint32(dataSeg)*16 + 0x3e),
 		SIB:       s.M.Read16(uint32(dataSeg)*16 + 0x34),
+		Para:      s.M.Read16(uint32(dataSeg)*16 + 0x2a),
 		EVec:      s.M.Read16(uint32(dataSeg)*16 + 0x3a),
 		Flipped:   s.M.Read16(uint32(dataSeg)*16+0x44) != 1,
 		TIB:       s.M.Read16(uint32(dataSeg)*16 + 0x3c),
@@ -170,6 +171,7 @@ func (e *liveEnv) ByERec(erec uint16) (*pmachine.Segment, error) {
 		ERec:      erec,
 		EVec:      e.s.DataWord(erec + 2),
 		SIB:       sib,
+		Para:      seg,
 		Flipped:   binary.LittleEndian.Uint16(code[0x0c:]) != 1,
 	}, nil
 }

@@ -50,6 +50,9 @@ type State struct {
 	// 索引的 E_Rec 指標陣列。**跟著段走**——每一段有自己的參照清單。
 	EVec uint16
 
+	// Para 是目前這一段的 paragraph（直譯器的 ss:2Ah，8086 上是段暫存器的值）。
+	Para uint16
+
 	// SIB 是目前這一段的段資訊塊（直譯器的 ss:34h）。換段時要把 activity
 	// 與參考計數記進去，作業系統靠那兩個值決定換誰出去。
 	SIB uint16
@@ -83,6 +86,9 @@ type Segment struct {
 	ERec      uint16
 	EVec      uint16 // E_Rec+2：以 segment number 索引的 E_Rec 指標陣列
 	SIB       uint16 // 段資訊塊（E_Rec+4）：參考計數與 activity 都記在裡面
+	// Para 是這一段在實體記憶體裡的 paragraph。我們不用它定址，
+	// 但作業系統讀得到 `ss:2Ah`，那一格記的就是它。
+	Para uint16
 	// Flipped 是「這一段的 byte sex 與主機相反」，從段頭第 0x0C 個位元組讀出來。
 	// **跟著段走，不是機器的屬性**——同一個 codefile 裡就會混著兩種。
 	Flipped bool
@@ -144,6 +150,16 @@ func (e *IntrinsicCall) Error() string {
 // ErrNotResident 是「那一段不在記憶體」。原版遇到這個會退回指令開頭、
 // 發 segment fault 讓作業系統去載入，然後**重跑同一條指令**。
 var ErrNotResident = errors.New("pmachine: 段不在記憶體")
+
+// NotResident 是「那一段不在記憶體」，而且說得出是哪一段。
+// segment fault 要把出錯的 E_Rec 交給作業系統，所以錯誤本身要帶著它。
+type NotResident struct{ ERec uint16 }
+
+func (e *NotResident) Error() string {
+	return fmt.Sprintf("pmachine: E_Rec %04Xh 那一段不在記憶體", e.ERec)
+}
+
+func (e *NotResident) Is(target error) bool { return target == ErrNotResident }
 
 // Unimplemented 是「這個 opcode 還沒做」。
 //
@@ -241,6 +257,33 @@ func (s *State) bytes() uint16 { return s.big() * 2 }
 // Step 執行一條 p-code，回傳剛執行的 opcode。
 func (s *State) Step() (uint8, error) {
 	at := s.IPC
+	op, err := s.step(at)
+	// **段不在記憶體要退回這一條的開頭。** 作業系統把它載進來之後會重跑，
+	// 不退回的話就會從運算元中間繼續（@0x1442 的 `dec si` 做的是同一件事）。
+	if err != nil && errors.Is(err, ErrNotResident) {
+		s.IPC = at
+	}
+	return op, err
+}
+
+// Signal 讓宿主也發得出號誌——segment fault 要靠它叫醒作業系統的載入 task。
+func (s *State) Signal(sem uint16) error {
+	if int16(s.Load(sem)) < 0 || s.Load(sem+2) == 0 {
+		s.Store(sem, s.Load(sem)+1)
+		return nil
+	}
+	woken := s.Load(sem + 2)
+	s.Store(sem+2, s.Load(woken))
+	s.Store(woken, 0)
+	s.Store(woken+0x14, 0)
+	s.Store(readyQueue, s.queueInsert(s.Load(readyQueue), woken))
+	if s.priority(woken) >= s.priority(s.Load(tibPtr)) {
+		return s.switchTask()
+	}
+	return nil
+}
+
+func (s *State) step(at uint16) (uint8, error) {
 	op := s.fetch()
 
 	switch {
@@ -650,21 +693,10 @@ func (s *State) Step() (uint8, error) {
 		}
 	case 0xde: // SIGNAL @0x17d5 → 助手 @0x1791
 		sem := s.pop()
-		if int16(s.Load(sem)) < 0 || s.Load(sem+2) == 0 {
-			s.Store(sem, s.Load(sem)+1)
-			break
-		}
-		// 有人在等：把佇列頭那個叫起來，放進 ready queue。
-		woken := s.Load(sem + 2)
-		s.Store(sem+2, s.Load(woken))
-		s.Store(woken, 0)
-		s.Store(woken+0x14, 0)
-		s.Store(readyQueue, s.queueInsert(s.Load(readyQueue), woken))
-		// 叫起來的那個優先權不低於自己才換人（@0x17C7 的 `jb`）。
-		if s.priority(woken) >= s.priority(s.Load(tibPtr)) {
-			if err := s.switchTask(); err != nil {
-				return op, err
-			}
+		// 有人在等：把佇列頭那個叫起來，放進 ready queue，
+		// 優先權不低於自己就換人（@0x17C7 的 `jb`）。
+		if err := s.Signal(sem); err != nil {
+			return op, err
 		}
 	case 0xd1: // SPR @0x16ca：寫處理器暫存器，然後整份狀態從 TIB 重讀
 		v := s.pop()
@@ -928,6 +960,17 @@ func (s *State) call(proc, static uint16) error {
 	}
 
 	// 配置區域資料：新的 SP ＝ 舊的 SP − 2×DATASIZE（@0x02da 算出來的值）。
+	//
+	// **配置之前那一格會留下一個值。** 原版是用 `call` 進堆疊檢查助手的
+	// （@0x104F／@0x1057），那一次 call 把返回位址推在舊 SP 底下，
+	// 而那個位置正是**編號最大的那個區域變數**。作業系統讀得到它——
+	// 開機途中就有一支 DATASIZE 為 1 的程序把它當參數傳出去。
+	// 值取決於 `ss:48h`：是 1 走 @0x1057 那條，返回位址是 105Ah，否則是 1052h。
+	ret := uint16(0x1052)
+	if int(0x48) < len(s.Data) && s.Data[0x48] == 1 {
+		ret = 0x105A
+	}
+	s.Store(s.SP-2, ret)
 	s.SP -= 2 * uint16(dataSize)
 
 	mp := s.Local - 8
@@ -1005,6 +1048,7 @@ func (s *State) enter(t *Segment) {
 	s.ERec = t.ERec
 	s.EVec = t.EVec
 	s.SIB = t.SIB
+	s.Para = t.Para
 	s.Flipped = t.Flipped // @0x1002：換段時一起換掉 ss:44h
 	s.sync()
 }
@@ -1019,6 +1063,7 @@ func (s *State) sync() {
 	s.Store(0x24, s.IPC)
 	s.Store(0x26, s.Local)
 	s.Store(0x28, s.Global)
+	s.Store(0x2a, s.Para)
 	s.Store(0x2e, s.Local-8)
 	s.Store(0x30, s.Global-8)
 	s.Store(0x32, s.Proc)
