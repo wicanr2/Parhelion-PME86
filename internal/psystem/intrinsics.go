@@ -278,13 +278,18 @@ func (m *Machine) logIO(format string, a ...any) {
 
 // hostRequest 是 unit 128：DOS 主機的檔案系統閘道。
 //
-// 協定還沒解開，**目前照量到的行為回答**：七個位元組的請求，
-// 驅動把第一個 word 換成 3 然後回 IORESULT 0；兩個位元組的請求原封不動，
-// 回 IORESULT 10（沒有這個檔案）。作業系統開機時拿它問 DOS 那邊有沒有檔案，
-// 得到「沒有」是正常結果。
+// 那是 DOS 版特有的東西——讓 p-System 直接讀寫底下那台 DOS 的檔案。
+// **Go 宿主底下沒有 DOS，所以這條路的答案永遠是「沒有」**，
+// 這與 `NAT` 是同一種界線：不是還沒做，是這台機器上不存在那個東西。
 //
-// **這一格是「宿主答什麼」，不是「p-machine 怎麼算」**——真的要支援
-// DOS 檔案系統得先把協定解出來。
+// 回答照原版量到的形狀：請求塊（七個位元組以上）把第一個 word 換成狀態碼，
+// 短的那種回 IORESULT 10（沒有這個檔案）。作業系統開機時會問一次，
+// 得到「沒有」就往下走，所以整段開機不受影響。
+//
+// 觀察到的往來長這樣（`cmd/ioprobe` 量的）：
+//
+//	寫 7 個位元組 {命令, 緩衝區位址, 長度, 旗標} → 第一個 word 變成 3
+//	寫 2 個位元組（那個緩衝區裡的資料）         → IORESULT 10
 func (m *Machine) hostRequest(buf, n uint16, read bool) error {
 	m.logIO("主機閘道：%d 個位元組 %04X（%s）", n, buf, map[bool]string{true: "讀", false: "寫"}[read])
 	if n >= 7 {
@@ -328,14 +333,15 @@ var deviceStatus = map[uint16]uint16{
 
 // IORESULT 與幾個用得到的碼（手冊 p.117 的 I/O 錯誤表）。
 const (
-	ioResult       = 0x00E6
-	ioBadBlock     = 1
-	ioBadUnit      = 2
-	ioBadRequest   = 3
-	ioNoInput      = 4
-	ioNoVolume     = 9
-	ioNoFile       = 10
-	hostGate       = 128
+	ioResult     = 0x00E6
+	ioBadBlock   = 1
+	ioBadUnit    = 2
+	ioBadRequest = 3
+	ioNoInput    = 4
+	ioNoVolume   = 9
+	ioNoFile     = 10
+	hostGate     = 128
+	// hostNoDOSFiles 是閘道回的狀態碼。原版在沒有可用的 DOS 檔案時就回這個。
 	hostNoDOSFiles = 3
 	// vectorTable 是中斷向量對號誌的表（`ss:4Eh` 起，上限 64 個）。
 	// 中斷來的時候直譯器就 SIGNAL 對應的那個號誌（@0x1878）。
