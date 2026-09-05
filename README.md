@@ -1,41 +1,20 @@
 # Parhelion PME
 
+[English](README.en.md) ｜ [日本語](README.ja.md) ｜ **繁體中文**
+
 幻日 —— 用 Go 重做的 UCSD p-System，以及支撐它的知識庫。
 
 一片 1984 年的 `.VOL` 磁碟映像丟進去，p-System 自己開到命令列，
 按鍵有反應，Filer 列得出目錄。**沒有原版直譯器，沒有 DOS，沒有 8086 模擬器。**
 
-```
-$ go run ./cmd/boot -vol PSYSTEM.VOL
-Copyright 1979 U.C. Regents; Copyright 1985 SofTech Microsystems
-Startup Utility - [1R1.0]
-PSYSTEM:SYSTEM.MISCINFO ---> RAMDISK:SYSTEM.MISCINFO
-PSYSTEM:SYSTEM.PASCAL   ---> RAMDISK:SYSTEM.PASCAL
-PSYSTEM:SYSTEM.EDITOR   ---> RAMDISK:SYSTEM.EDITOR
-PSYSTEM:SYSTEM.FILER    ---> RAMDISK:SYSTEM.FILER
-PSYSTEM:SYSTEM.LIBRARY  ---> RAMDISK:SYSTEM.LIBRARY
-Root is RAMDISK
-Prefix is RAMDISK
-SYSTEM.PASCAL is on RAMDISK
-Command: E(dit, R(un, F(ile, C(omp, L(ink, X(ecute, A(ssem,? [IV.2.1 R3.3]
-
-走了 226624 條，停在等鍵盤
-```
+<p align="center"><img src="img/boot-screen.svg" width="820" alt="一片 .VOL 進去，p-System 自己開到命令列"></p>
 
 那五行 `--->` 是作業系統**自己**把系統檔複製到記憶體磁碟上。
 打字進去它會動：
 
-```
-$ go run ./cmd/boot -vol PSYSTEM.VOL -keys $'FLRAMDISK:\r'
-Filer: L(dir, R(em, C(hng, T(rans, D(ate, Q(uit, B(ad-blks, E(xt-dir,? [6R4.0]
-Dir listing of what vol ? RAMDISK:
+<p align="center"><img src="img/filer-screen.svg" width="820" alt="按 F 進 Filer、按 L 列目錄"></p>
 
-RAMDISK:
-SYSTEM.MISCINFO    2  2-Sep-90           SYSTEM.PASCAL    136 14-Jan-85
-SYSTEM.EDITOR    106  9-Dec-85           SYSTEM.FILER      45 20-Dec-84
-SYSTEM.LIBRARY   102 27-Dec-84
-5/5 files<listed/in-dir>, 397 blocks used, 353 unused, 353 in largest
-```
+那五個檔案是**作業系統自己在開機時複製到記憶體磁碟上的**。
 
 ## 這台機器現在做得到什麼
 

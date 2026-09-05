@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="606" height="404" viewBox="0 0 606 404" font-family="'DejaVu Sans Mono','Menlo','Consolas',monospace">
+<rect width="606" height="404" rx="8" fill="#12141a"/>
+<path d="M0 8a8 8 0 0 1 8-8h590a8 8 0 0 1 8 8v22H0z" fill="#20242e"/>
+<circle cx="16" cy="15" r="5" fill="#e05c5c"/>
+<circle cx="34" cy="15" r="5" fill="#e0b23a"/>
+<circle cx="52" cy="15" r="5" fill="#5ca85c"/>
+<text x="70" y="20" fill="#7f8794" font-size="12">parhelion — UCSD p-System on a Go p-machine</text>
+<text x="14" y="56" fill="#e08b3a" font-size="13" xml:space="preserve">$ go run ./cmd/boot -vol PSYSTEM.VOL</text>
+<text x="14" y="89" fill="#d7dae0" font-size="13" xml:space="preserve">disk &quot;PSYSTEM&quot;, boot segment USERPROG (block 1, 3831 words, 41 routines)</text>
+<text x="14" y="106" fill="#d7dae0" font-size="13" xml:space="preserve">SYSTEM.CONFIG: 34 devices, unit 13 = RAMDSK.DRV, unit 14 = DOSVV.DRV</text>
+<text x="14" y="122" fill="#d7dae0" font-size="13" xml:space="preserve">start IPC 1AB8  SP D7C2  MP D7C2  E_Rec D7D2</text>
+<text x="14" y="155" fill="#d7dae0" font-size="13" xml:space="preserve">--- console ---------------------------------------------------------------</text>
+<text x="14" y="172" fill="#d7dae0" font-size="13" xml:space="preserve">Copyright 1979 U.C. Regents; Copyright 1985 SofTech Microsystems</text>
+<text x="14" y="188" fill="#d7dae0" font-size="13" xml:space="preserve">Startup Utility - [1R1.0]</text>
+<text x="14" y="204" fill="#d7dae0" font-size="13" xml:space="preserve">PSYSTEM:SYSTEM.MISCINFO ---&gt; RAMDISK:SYSTEM.MISCINFO</text>
+<text x="14" y="221" fill="#d7dae0" font-size="13" xml:space="preserve">PSYSTEM:SYSTEM.PASCAL   ---&gt; RAMDISK:SYSTEM.PASCAL</text>
+<text x="14" y="238" fill="#d7dae0" font-size="13" xml:space="preserve">PSYSTEM:SYSTEM.EDITOR   ---&gt; RAMDISK:SYSTEM.EDITOR</text>
+<text x="14" y="254" fill="#d7dae0" font-size="13" xml:space="preserve">PSYSTEM:SYSTEM.FILER    ---&gt; RAMDISK:SYSTEM.FILER</text>
+<text x="14" y="270" fill="#d7dae0" font-size="13" xml:space="preserve">PSYSTEM:SYSTEM.LIBRARY  ---&gt; RAMDISK:SYSTEM.LIBRARY</text>
+<text x="14" y="287" fill="#d7dae0" font-size="13" xml:space="preserve">Root is RAMDISK</text>
+<text x="14" y="304" fill="#d7dae0" font-size="13" xml:space="preserve">Prefix is RAMDISK</text>
+<text x="14" y="320" fill="#d7dae0" font-size="13" xml:space="preserve">SYSTEM.PASCAL is on RAMDISK</text>
+<text x="14" y="336" fill="#d7dae0" font-size="13" xml:space="preserve">Command: E(dit, R(un, F(ile, C(omp, L(ink, X(ecute, A(ssem,? [IV.2.1 R3.3]</text>
+<text x="14" y="353" fill="#d7dae0" font-size="13" xml:space="preserve">---------------------------------------------------------------------------</text>
+<text x="14" y="386" fill="#d7dae0" font-size="13" xml:space="preserve">226624 p-code instructions, now waiting for the keyboard</text>
+</svg>

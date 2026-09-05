@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="667" height="240" viewBox="0 0 667 240" font-family="'DejaVu Sans Mono','Menlo','Consolas',monospace">
+<rect width="667" height="240" rx="8" fill="#12141a"/>
+<path d="M0 8a8 8 0 0 1 8-8h651a8 8 0 0 1 8 8v22H0z" fill="#20242e"/>
+<circle cx="16" cy="15" r="5" fill="#e05c5c"/>
+<circle cx="34" cy="15" r="5" fill="#e0b23a"/>
+<circle cx="52" cy="15" r="5" fill="#5ca85c"/>
+<text x="70" y="20" fill="#7f8794" font-size="12">parhelion — UCSD p-System on a Go p-machine</text>
+<text x="14" y="56" fill="#e08b3a" font-size="13" xml:space="preserve">$ go run ./cmd/boot -vol PSYSTEM.VOL -keys $&#x27;FLRAMDISK:\r&#x27;</text>
+<text x="14" y="89" fill="#d7dae0" font-size="13" xml:space="preserve">screen (80x25):</text>
+<text x="14" y="106" fill="#d7dae0" font-size="13" xml:space="preserve"> 0 |Filer: L(dir, R(em, C(hng, T(rans, D(ate, Q(uit, B(ad-blks, E(xt-dir,? [6R4.0]|</text>
+<text x="14" y="122" fill="#d7dae0" font-size="13" xml:space="preserve"> 1 |RAMDISK:|</text>
+<text x="14" y="138" fill="#d7dae0" font-size="13" xml:space="preserve"> 2 |SYSTEM.MISCINFO    2  2-Sep-90           SYSTEM.PASCAL    136 14-Jan-85|</text>
+<text x="14" y="155" fill="#d7dae0" font-size="13" xml:space="preserve"> 3 |SYSTEM.EDITOR    106  9-Dec-85           SYSTEM.FILER      45 20-Dec-84|</text>
+<text x="14" y="172" fill="#d7dae0" font-size="13" xml:space="preserve"> 4 |SYSTEM.LIBRARY   102 27-Dec-84|</text>
+<text x="14" y="188" fill="#d7dae0" font-size="13" xml:space="preserve"> 5 |5/5 files&lt;listed/in-dir&gt;, 397 blocks used, 353 unused, 353 in largest|</text>
+<text x="14" y="204" fill="#d7dae0" font-size="13" xml:space="preserve"> 6 ||</text>
+<text x="14" y="221" fill="#d7dae0" font-size="13" xml:space="preserve"> 7 ||</text>
+</svg>
