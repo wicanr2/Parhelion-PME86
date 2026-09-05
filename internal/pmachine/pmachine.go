@@ -46,6 +46,14 @@ type State struct {
 	Proc uint16
 	ERec uint16
 
+	// EVec 是目前這一段看到的 E_Vec（直譯器的 ss:3Ah）：以 segment number
+	// 索引的 E_Rec 指標陣列。**跟著段走**——每一段有自己的參照清單。
+	EVec uint16
+
+	// SIB 是目前這一段的段資訊塊（直譯器的 ss:34h）。換段時要把 activity
+	// 與參考計數記進去，作業系統靠那兩個值決定換誰出去。
+	SIB uint16
+
 	// TIB 是目前 task 的 Task Information Block（直譯器的 `ss:3Ch`）。
 	// `LPR` 讀它之前要先把執行狀態同步進去。
 	TIB uint16
@@ -73,6 +81,11 @@ type Segment struct {
 	ProcDict  uint16 // 程序字典在 Code 裡的位元組偏移
 	ConstPool uint16 // 常數池在 Code 裡的位元組偏移
 	ERec      uint16
+	EVec      uint16 // E_Rec+2：以 segment number 索引的 E_Rec 指標陣列
+	SIB       uint16 // 段資訊塊（E_Rec+4）：參考計數與 activity 都記在裡面
+	// Flipped 是「這一段的 byte sex 與主機相反」，從段頭第 0x0C 個位元組讀出來。
+	// **跟著段走，不是機器的屬性**——同一個 codefile 裡就會混著兩種。
+	Flipped bool
 }
 
 // Environment 解析 segment number 與 E_Rec。
@@ -490,11 +503,11 @@ func (s *State) Step() (uint8, error) {
 		off := s.bytes()
 		idx := int16(s.pop())
 		tbl := s.ConstPool + off
-		lo, hi := int16(s.codeWord(tbl)), int16(s.codeWord(tbl+2))
+		lo, hi := int16(s.tableWord(tbl)), int16(s.tableWord(tbl+2))
 		if idx < lo || idx > hi {
 			break // 超出範圍就什麼都不做，往下一條走
 		}
-		s.IPC = uint16(int16(s.IPC) + int16(s.codeWord(tbl+4+2*uint16(idx-lo))))
+		s.IPC = uint16(int16(s.IPC) + int16(s.tableWord(tbl+4+2*uint16(idx-lo))))
 
 	case 0x83: // LDC @0x095d：從常數池推 UB_2 個 word，位址低的留在 TOS
 		mode := s.fetch()
@@ -632,7 +645,7 @@ func (s *State) Step() (uint8, error) {
 		}
 		s.IPC = at
 		return op, &TaskSwitch{IPC: at, Why: "有 task 在等這個號誌，要喚醒它"}
-	case 0xd1: // SPR @0x16ca：寫處理器暫存器，然後從 TIB 重讀狀態
+	case 0xd1: // SPR @0x16ca：寫處理器暫存器，然後整份狀態從 TIB 重讀
 		v := s.pop()
 		n := int16(s.pop())
 		s.syncTIB()
@@ -641,10 +654,11 @@ func (s *State) Step() (uint8, error) {
 		} else {
 			s.Store(uint16(0x3e+2*n), v)
 		}
-		// @0x1623 會把 MSPROC 從 TIB 讀回來。寫到別的暫存器時這是個 no-op。
-		if s.TIB != 0 {
-			w := s.Load(s.TIB + 0x12)
-			s.Proc, s.ProcHigh = w&0xff, uint8(w>>8)
+		// **重讀不是可有可無的。** 寫的若是暫存器 −1（`ss:3Ch`，目前的 TIB），
+		// 這一步就是換 task：SP、MP、IPC、E_Rec 全部換成另一個 task 的。
+		if err := s.restoreTIB(); err != nil {
+			s.IPC = at
+			return op, err
 		}
 
 	case 0xbd: // SWAP @0x0807：對調堆疊頂兩個 word
@@ -857,6 +871,19 @@ func (s *State) chain(db uint16) uint16 {
 	return bp
 }
 
+// tableWord 讀 case 表的一個 word。
+//
+// 段的 byte sex 與主機相反時要逐 word 交換位元組——`XJP` 的 @0x0C12 那條路徑
+// 對上下界與表項各做一次 `xchg al,ah`。**表是資料不是指令**，
+// 所以它跟著段的 sex 走，而指令流不用。
+func (s *State) tableWord(off uint16) uint16 {
+	w := s.codeWord(off)
+	if s.Flipped {
+		w = w>>8 | w<<8
+	}
+	return w
+}
+
 // codeWord 讀程式碼段的一個 word。
 func (s *State) codeWord(off uint16) uint16 {
 	if int(off)+1 >= len(s.Code) {
@@ -891,6 +918,7 @@ func (s *State) call(proc, static uint16) error {
 	s.push(static) // MSSTAT
 	s.Local = s.SP + 8
 	s.IPC = hdr + 2
+	s.sync()
 	return nil
 }
 
@@ -923,12 +951,18 @@ func (s *State) callExternal(seg, proc, link uint16) error {
 		static = s.chain(link)
 	}
 
-	old := s.ERec
+	old, oldSIB := s.ERec, s.SIB
 	s.enter(target)
 	if err := s.call(proc, static); err != nil {
 		return err
 	}
-	s.Store(s.Local-8+6, old) // @0x10db：MSENV 改回呼叫端的 E_Rec
+	// @0x10db：MSENV 改回呼叫端的 E_Rec，離開的那一段記一次 activity，
+	// 進入的那一段參考計數加一。
+	s.Store(s.Local-8+6, old)
+	s.touch(oldSIB)
+	if s.SIB != 0 {
+		s.Store(s.SIB+4, s.Load(s.SIB+4)+1)
+	}
 	return nil
 }
 
@@ -939,6 +973,51 @@ func (s *State) enter(t *Segment) {
 	s.ProcDict = t.ProcDict
 	s.ConstPool = t.ConstPool
 	s.ERec = t.ERec
+	s.EVec = t.EVec
+	s.SIB = t.SIB
+	s.Flipped = t.Flipped // @0x1002：換段時一起換掉 ss:44h
+	s.sync()
+}
+
+// sync 把常駐在 struct 裡的狀態寫回資料段的正規位置。
+//
+// **不是可有可無的簿記。** 作業系統自己就是 p-code，它會直接讀這些格子
+// （`ss:110h` 的 activity 計數就是這樣被讀走的）；只留在 struct 裡的話，
+// 那些讀取會拿到開機那一刻的舊值，而且不會報錯。
+// 偏移見 docs/10-interpreter/machine-state.md。
+func (s *State) sync() {
+	s.Store(0x24, s.IPC)
+	s.Store(0x26, s.Local)
+	s.Store(0x28, s.Global)
+	s.Store(0x2e, s.Local-8)
+	s.Store(0x30, s.Global-8)
+	s.Store(0x32, s.Proc)
+	s.Store(0x34, s.SIB)
+	s.Store(0x3a, s.EVec)
+	s.Store(0x36, s.ProcDict)
+	s.Store(0x3e, s.ERec)
+	s.Store(0x42, s.ConstPool)
+	if s.Flipped {
+		s.Store(0x44, 256)
+	} else {
+		s.Store(0x44, 1)
+	}
+	if int(0xe6) < len(s.Data) {
+		s.Data[0xe6] = s.ProcHigh
+	}
+}
+
+// touch 記一次「這一段剛被用過」（助手 @0x10F5）。
+//
+// `ss:110h` 是單調遞增的計數器，每次換段加一並寫進那一段的 SIB+6。
+// 作業系統靠這個值決定要把哪一段換出去——**沒有它，換段策略就沒有依據**。
+func (s *State) touch(sib uint16) {
+	if sib == 0 {
+		return
+	}
+	n := s.Load(0x110) + 1
+	s.Store(0x110, n)
+	s.Store(sib+6, n)
 }
 
 // 靜態鏈的來源。0 與 1 以上都是「往外走幾層」，所以哨兵值要挑不會撞到的。
@@ -959,18 +1038,63 @@ func (s *State) returnFrom(paramBytes uint16) error {
 		if err != nil {
 			return err
 		}
+		leaving := s.SIB
 		s.enter(back)
+		// @0x113a：離開的那一段記一次 activity，參考計數減一。
+		s.touch(leaving)
+		if leaving != 0 {
+			s.Store(leaving+4, s.Load(leaving+4)-1)
+		}
 	}
 	s.SP = mp - 2
-	s.pop()          // [MP−2]：原版把它放進 di 就沒再用
+	below := s.pop() // [MP−2]：原生呼叫者的返回位址（@0x1147 的 di）
 	s.pop()          // MSSTAT
 	newMP := s.pop() // MSDYN
 	s.Local = newMP + 8
-	s.IPC = s.pop()  // MSIPC
-	s.pop()          // MSENV：段已經換回去了，這裡只是把它丟掉
-	s.Proc = s.pop() // MSPROC
+	s.IPC = s.pop() // MSIPC
+	s.pop()         // MSENV：段已經換回去了，這裡只是把它丟掉
+	proc := s.pop() // MSPROC
 	s.SP += paramBytes
+
+	// MSPROC 是負的 ＝ 這一格正在被 EXIT 拆掉（@0x1160 的 `js`）。
+	// 那時返回位址不是 MSIPC，而是這支程序自己的 EXITIC。
+	if int16(proc) < 0 {
+		s.Proc = -proc
+		exit, err := s.exitIC(s.Proc)
+		if err != nil {
+			return err
+		}
+		// @0x118e：兩個位址取比較後面的那個。已經走過離場碼就不要再跳回去。
+		if s.IPC == 0 {
+			if exit >= below {
+				return &NativeCall{IPC: s.IPC}
+			}
+			s.IPC = exit
+		} else if s.IPC < exit {
+			s.IPC = exit
+		}
+		s.sync()
+		return nil
+	}
+	s.Proc = proc
+	s.sync()
+	// MSIPC 為 0 ＝ 呼叫者是原生碼（@0x1166 → @0x11A5 的 `lret`）。
+	if s.IPC == 0 {
+		return &NativeCall{IPC: s.IPC}
+	}
 	return nil
+}
+
+// exitIC 查一支程序的離場位址。
+//
+// 程序字典項指的是 DATASIZE，EXITIC 在它前面一個 word（spec 01 §5.4）；
+// @0x117f 的 `mov bp,es:[bp]` 取字典項、`dec bp` 退一個 word、`shl bp` 換成位元組。
+func (s *State) exitIC(proc uint16) (uint16, error) {
+	entry := s.codeWord(s.ProcDict - 2*proc)
+	if entry == 0 {
+		return 0, &Fault{s.IPC, fmt.Sprintf("程序 %d 的字典項是 0，查不到 EXITIC", proc)}
+	}
+	return s.codeWord((entry - 1) * 2), nil
 }
 
 // intermediate 算中介層變數的位址：往外走 db 層靜態鏈，再加變數偏移。
@@ -1075,6 +1199,32 @@ func (s *State) syncTIB() {
 	s.Store(s.TIB+0x0e, s.IPC)
 	s.Store(s.TIB+0x10, s.ERec)
 	s.Store(s.TIB+0x12, s.Proc&0xff|uint16(s.ProcHigh)<<8)
+}
+
+// restoreTIB 把整份執行狀態從目前 task 的 TIB 讀回來（助手 @0x1623）。
+//
+// 順序照原版：先 MSPROC、再 E_Rec（連帶換段），最後 IPC、MP、SP。
+// **`ss:3Ch` 要重讀**——`SPR` 剛剛寫的可能就是它，那時「目前的 task」已經換人了。
+func (s *State) restoreTIB() error {
+	s.TIB = s.Load(0x3c)
+	if s.TIB == 0 {
+		return &Fault{s.IPC, "TIB 指標是 0，沒有 task 可以還原"}
+	}
+	w := s.Load(s.TIB + 0x12)
+	s.Proc, s.ProcHigh = w&0xff, uint8(w>>8)
+	if s.Env == nil {
+		return &Fault{s.IPC, "沒有 Environment，換不了 task 的段"}
+	}
+	seg, err := s.Env.ByERec(s.Load(s.TIB + 0x10))
+	if err != nil {
+		return err
+	}
+	s.enter(seg)
+	s.IPC = s.Load(s.TIB + 0x0e)
+	s.Local = s.Load(s.TIB+0x0a) + 8
+	s.SP = s.Load(s.TIB + 0x08)
+	s.sync()
+	return nil
 }
 
 // popSet 取一個堆疊上的集合：頂端是 word 數，底下依序是 word 0..N−1。

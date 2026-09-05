@@ -62,6 +62,8 @@ func (s *System) Capture() (*pmachine.State, error) {
 		ProcDict:  s.M.Read16(uint32(dataSeg)*16 + 0x36),
 		Proc:      s.M.Read16(uint32(dataSeg)*16 + 0x32),
 		ERec:      s.M.Read16(uint32(dataSeg)*16 + 0x3e),
+		SIB:       s.M.Read16(uint32(dataSeg)*16 + 0x34),
+		EVec:      s.M.Read16(uint32(dataSeg)*16 + 0x3a),
 		Flipped:   s.M.Read16(uint32(dataSeg)*16+0x44) != 1,
 		TIB:       s.M.Read16(uint32(dataSeg)*16 + 0x3c),
 		ProcHigh:  s.M.Read8(uint32(dataSeg)*16 + 0xe6),
@@ -157,6 +159,9 @@ func (e *liveEnv) ByERec(erec uint16) (*pmachine.Segment, error) {
 		ProcDict:  binary.LittleEndian.Uint16(code[0:]) * 2,
 		ConstPool: binary.LittleEndian.Uint16(code[0x0e:]) * 2,
 		ERec:      erec,
+		EVec:      e.s.DataWord(erec + 2),
+		SIB:       sib,
+		Flipped:   binary.LittleEndian.Uint16(code[0x0c:]) != 1,
 	}, nil
 }
 
@@ -209,6 +214,40 @@ func (d *Divergence) Error() string {
 		d.Step, d.IPC, d.Op, name, d.Field, d.Want, d.Got)
 }
 
+// Moment 是對拍途中的一步：兩邊各自的樣子。分歧發生時前面幾步最有用。
+type Moment struct {
+	Step     int
+	IPC      uint16 // 這一條在哪（執行前）
+	Op       uint8
+	Seg      uint16 // 原版當時的程式碼段
+	WantIPC  uint16 // 執行後：原版
+	WantSP   uint16
+	WantTOS  uint16
+	GotIPC   uint16 // 執行後：我們
+	GotSP    uint16
+	GotTOS   uint16
+	Resynced bool // 這一條是交給原版走的
+	MP       uint16
+	ERec     uint16
+}
+
+func (m Moment) String() string {
+	name := pcode.Mnemonic(m.Op)
+	if name == "" {
+		name = "?"
+	}
+	mark := " "
+	if m.Resynced {
+		mark = "~"
+	}
+	out := fmt.Sprintf("%s%6d %04X:%04X %02X %-7s → ipc=%04X sp=%04X tos=%04X  mp=%04X erec=%04X",
+		mark, m.Step, m.Seg, m.IPC, m.Op, name, m.WantIPC, m.WantSP, m.WantTOS, m.MP, m.ERec)
+	if m.WantIPC != m.GotIPC || m.WantSP != m.GotSP || m.WantTOS != m.GotTOS {
+		out += fmt.Sprintf("\n        我們 → ipc=%04X sp=%04X tos=%04X", m.GotIPC, m.GotSP, m.GotTOS)
+	}
+	return out
+}
+
 // ParityResult 是一次對拍的結果。
 type ParityResult struct {
 	Steps   int           // 兩邊一致地走了幾條
@@ -221,6 +260,24 @@ type ParityResult struct {
 	// **這些條沒有被驗證過。** 分母要看 Steps，不是 Steps+Resyncs。
 	Resyncs int
 	Skipped map[uint8]int
+
+	// Ours 是停下來那一刻我們這一側的狀態。分歧之後拿它跟原版的記憶體
+	// 逐位元組比，才看得出「是哪一格被寫壞的」。
+	Ours *pmachine.State
+
+	// Tail 是停下來之前的最後幾步，兩邊並排。分歧的原因通常在這裡面，
+	// 不在分歧那一條本身。
+	Tail []Moment
+}
+
+// tailLen 是留幾步。夠看出「是誰把狀態弄壞的」，又不會洗版。
+const tailLen = 24
+
+func (r *ParityResult) remember(m Moment) {
+	r.Tail = append(r.Tail, m)
+	if len(r.Tail) > tailLen {
+		r.Tail = r.Tail[1:]
+	}
 }
 
 // hostOwned 回報這個錯誤是不是「本來就該由宿主做的事」。
@@ -254,6 +311,7 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 		return nil, err
 	}
 	res := &ParityResult{Ops: map[uint8]int{}, Skipped: map[uint8]int{}}
+	defer func() { res.Ours = ours }()
 
 	for i := 0; i < n; i++ {
 		at, want := ours.IPC, uint8(0)
@@ -279,6 +337,12 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 				return res, nil
 			}
 			ours = next
+			res.remember(Moment{
+				Step: i, IPC: at, Op: op, Seg: s.M.CPU.Seg[dosgolem.DS],
+				WantIPC: ours.IPC, WantSP: ours.SP, WantTOS: ours.TOS(),
+				GotIPC: ours.IPC, GotSP: ours.SP, GotTOS: ours.TOS(),
+				Resynced: true, MP: ours.Local - 8, ERec: ours.ERec,
+			})
 			res.Resyncs++
 			res.Skipped[op]++
 			continue
@@ -300,6 +364,12 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 			return res, nil
 		}
 		r := rows[0]
+		res.remember(Moment{
+			Step: i, IPC: at, Op: op, Seg: r.Seg,
+			WantIPC: r.IPC, WantSP: r.SP, WantTOS: r.TOS,
+			GotIPC: ours.IPC, GotSP: ours.SP, GotTOS: ours.TOS(),
+			MP: ours.Local - 8, ERec: ours.ERec,
+		})
 
 		for _, chk := range []struct {
 			field     string
@@ -308,6 +378,7 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 			{"IPC", r.IPC, ours.IPC},
 			{"SP", r.SP, ours.SP},
 			{"TOS", r.TOS, ours.TOS()},
+			{"E_Rec", r.ERec, ours.ERec},
 		} {
 			if chk.want != chk.got {
 				res.Diverge = &Divergence{
@@ -320,4 +391,36 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 		res.Steps++
 	}
 	return res, nil
+}
+
+// DataDiff 把我們的資料段與原版的逐位元組比，回報前 max 段不同的地方。
+//
+// 對拍只比三個純量，堆疊深處與全域資料寫壞了不會當場報錯——
+// 分歧發生時這一步才看得出來是哪一格。
+func (s *System) DataDiff(ours *pmachine.State, max int) []string {
+	live := s.M.SegmentBytes(s.M.CPU.Seg[dosgolem.SS], len(ours.Data))
+	if live == nil {
+		return nil
+	}
+	var out []string
+	for i := 0; i < len(live) && len(out) < max; i++ {
+		if live[i] == ours.Data[i] {
+			continue
+		}
+		j := i
+		for j < len(live) && live[j] != ours.Data[j] {
+			j++
+		}
+		out = append(out, fmt.Sprintf("%04X–%04X（%d byte）原版 %X 我們 %X",
+			i, j-1, j-i, live[i:min(j, i+8)], ours.Data[i:min(j, i+8)]))
+		i = j
+	}
+	return out
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

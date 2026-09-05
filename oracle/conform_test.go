@@ -32,14 +32,18 @@ func traceCodefile(t *testing.T) string {
 
 const (
 	// traceBudget 是原版每走一條 p-code 給的機器指令預算。
-	traceBudget = 200_000
+	//
+	// **這個數字會決定對拍走多遠。** 開機到後段，作業系統會在兩條 p-code
+	// 之間花掉大量機器指令（等磁碟、輪詢鍵盤），預算不夠就會被誤判成
+	// 「原版沒事做了」。40 萬條走得完整段開機。
+	traceBudget = 400_000
 
 	// parityWant 是想走的條數；parityFloor 是「至少要走到這裡」。
 	//
 	// 下限釘住的是**進度不能倒退**。上限走不完不是失敗——那表示碰到還沒
 	// 實作的指令，而那是下一輪的工作，不是這一輪的錯。
-	parityWant  = 50_000
-	parityFloor = 12_900
+	parityWant  = 400_000
+	parityFloor = 200_000
 )
 
 func TestExecutedCodeMatchesWhatTheReaderParses(t *testing.T) {

@@ -301,6 +301,7 @@ type PCode struct {
 	Seg, IPC uint16 // p-code 所在的 code segment 與段內位元組偏移
 	Op       uint8  // 剛開始執行的 opcode
 	SP, TOS  uint16 // 求值堆疊頂的位置與內容
+	ERec     uint16 // 目前的 E_Rec（`ss:3Eh`）——在哪一段執行
 }
 
 // Mnemonic 是這個 opcode 在 IV.0 官方表裡的助記符；沒有對應指令就是空字串。
@@ -370,9 +371,10 @@ func (s *System) Trace(want int, budget uint64) ([]PCode, error) {
 		ds, si, sp := c.Seg[dosgolem.DS], c.R[dosgolem.SI], c.R[dosgolem.SP]
 		out = append(out, PCode{
 			Seg: ds, IPC: si - 1,
-			Op:  s.M.Read8(uint32(ds)*16 + uint32(si-1)),
-			SP:  sp,
-			TOS: s.M.Read16(uint32(c.Seg[dosgolem.SS])*16 + uint32(sp)),
+			Op:   s.M.Read8(uint32(ds)*16 + uint32(si-1)),
+			SP:   sp,
+			TOS:  s.M.Read16(uint32(c.Seg[dosgolem.SS])*16 + uint32(sp)),
+			ERec: s.M.Read16(uint32(c.Seg[dosgolem.SS])*16 + erecOff),
 		})
 	}
 	return out, nil

@@ -22,6 +22,7 @@ func main() {
 	pme := flag.String("pme", "", "抽出來的 SYSTEM.PME.86")
 	n := flag.Int("n", 1000, "要對拍幾條 p-code")
 	wait := flag.Uint64("wait", 20_000_000, "等直譯器出現最多花幾條指令")
+	tail := flag.Bool("tail", false, "分歧時印出前面幾步")
 	budget := flag.Uint64("budget", 200_000, "原版每走一條 p-code 的機器指令預算")
 	flag.Parse()
 	if *pme == "" {
@@ -56,6 +57,22 @@ func main() {
 	}
 	if res.Diverge != nil {
 		fmt.Println("分歧：", res.Diverge)
+	}
+	if res.Diverge != nil && res.Ours != nil {
+		if diff := s.DataDiff(res.Ours, 12); len(diff) > 0 {
+			fmt.Printf("\n資料段有 %d 段對不上（前幾段）：\n", len(diff))
+			for _, d := range diff {
+				fmt.Println("  ", d)
+			}
+		} else {
+			fmt.Println("\n資料段逐位元組相同——分歧不在記憶體裡。")
+		}
+	}
+	if *tail && len(res.Tail) > 0 {
+		fmt.Printf("\n停下來之前的 %d 步（`~` 是交給原版走的）：\n", len(res.Tail))
+		for _, m := range res.Tail {
+			fmt.Println(m)
+		}
 	}
 	if res.Err != nil {
 		fmt.Println("停下來的原因：", res.Err)
