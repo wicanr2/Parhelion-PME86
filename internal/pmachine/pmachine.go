@@ -45,6 +45,10 @@ type State struct {
 	Proc uint16
 	ERec uint16
 
+	// Flipped 表示目前這一段的 byte sex 與主機相反（直譯器的 `ss:44h` 不是 1）。
+	// `LDC`、`MOV`、`XJP` 取多字資料時要逐 word 交換位元組。
+	Flipped bool
+
 	// Env 回答「segment number（或 E_Rec）對應哪一段」，跨段呼叫要用。
 	// nil 表示只跑得動同一段。
 	//
@@ -433,6 +437,82 @@ func (s *State) Step() (uint8, error) {
 		s.push(width)
 		s.push(idx % per * width)
 
+	// 位元組陣列與字串比較。@0x0abc／@0x0b1f 共用的形狀：
+	// 兩個 mode 位元組決定兩邊的位址在哪個段（0 ＝ 資料段，非 0 ＝ 程式碼段），
+	// 然後 `repe cmpsb`。**TOS 是右運算元**，與其他比較一致。
+	case 0xb9, 0xba, 0xbb: // EQBYT／LEBYT／GEBYT @0x0ae9／@0x0b11／@0x0b18
+		mr, ml := s.fetch(), s.fetch() // 先讀的那個管 TOS 那一側
+		n := s.big()                   // 長度是**位元組數**，沒有乘二
+		right := s.blockAt(mr, s.pop(), n)
+		left := s.blockAt(ml, s.pop(), n)
+		s.push(byteResult(op, cmpBytes(left, right)))
+
+	case 0xe8, 0xe9, 0xea: // EQSTR／LESTR／GESTR @0x0b56／@0x0b5d／@0x0b64
+		mr, ml := s.fetch(), s.fetch()
+		right := s.stringAt(mr, s.pop())
+		left := s.stringAt(ml, s.pop())
+		s.push(byteResult(strOp(op), cmpBytes(left, right)))
+
+	case 0xd6: // XJP @0x0bdc：case 表在常數池裡
+		off := s.bytes()
+		idx := int16(s.pop())
+		tbl := s.ConstPool + off
+		lo, hi := int16(s.codeWord(tbl)), int16(s.codeWord(tbl+2))
+		if idx < lo || idx > hi {
+			break // 超出範圍就什麼都不做，往下一條走
+		}
+		s.IPC = uint16(int16(s.IPC) + int16(s.codeWord(tbl+4+2*uint16(idx-lo))))
+
+	case 0x83: // LDC @0x095d：從常數池推 UB_2 個 word，位址低的留在 TOS
+		mode := s.fetch()
+		off := s.bytes()
+		n := uint16(s.fetch())
+		if s.Flipped && mode == 2 {
+			return op, &Fault{at, "反 byte sex 段的多字常數還沒做"}
+		}
+		for i := n; i > 0; i-- {
+			s.push(s.codeWord(s.ConstPool + off + 2*(i-1)))
+		}
+
+	case 0xed: // INCI @0x090c
+		s.push(s.pop() + 1)
+
+	// 跨段的全域變數。助手 @0x15d2：段號查 E_Vec 拿到 E_Rec，
+	// 讀它的 Env_Data，再加 2n+8——也就是那一段的全域基底加變數偏移。
+	case 0x9a, 0x9b, 0xd9: // LDE @0x069d／LAE @0x06ac／STE @0x088b
+		a, err := s.extended()
+		if err != nil {
+			return op, err
+		}
+		switch op {
+		case 0x9a:
+			s.push(s.Load(a))
+		case 0x9b:
+			s.push(a)
+		default:
+			s.Store(a, s.pop())
+		}
+
+	case 0x8e: // STM @0x09d9：把堆疊上 UB 個 word 存到底下那個位址
+		n := uint16(s.fetch())
+		addr := s.Load(s.SP + 2*n) // 位址壓在那幾個值底下
+		for i := uint16(0); i < n; i++ {
+			s.Store(addr+2*i, s.pop())
+		}
+		s.SP += 2 // 丟掉位址
+
+	case 0xc5: // MOV @0x09fa：搬 B 個 word
+		mode := s.fetch()
+		n := s.big()
+		src := s.pop()
+		dst := s.pop()
+		if s.Flipped && mode == 2 {
+			return op, &Fault{at, "反 byte sex 段的 MOV 還沒做"}
+		}
+		for i := uint16(0); i < n; i++ {
+			s.Store(dst+2*i, s.wordFrom(mode, src+2*i))
+		}
+
 	case 0xd0: // LDM @0x09b8：推 UB 個 word，位址低的那個留在 TOS
 		n := uint16(s.fetch())
 		addr := s.pop()
@@ -661,6 +741,109 @@ func (s *State) jumpByte() {
 func (s *State) jumpWord() {
 	d := int16(s.fetchWord())
 	s.IPC = uint16(int16(s.IPC) + d)
+}
+
+// extended 算跨段全域變數的位址（助手 @0x15d2）。
+func (s *State) extended() (uint16, error) {
+	seg := uint16(s.fetch())
+	if s.Env == nil {
+		return 0, &Fault{s.IPC, "沒有 Environment，跨段全域變數讀不了"}
+	}
+	t, err := s.Env.ByNumber(seg)
+	if err != nil {
+		return 0, err
+	}
+	return t.Global + s.bytes(), nil
+}
+
+// wordFrom 依 mode 取一個 word：0 是資料段，非 0 是程式碼段的常數區塊。
+func (s *State) wordFrom(mode uint8, off uint16) uint16 {
+	if mode == 0 {
+		return s.Load(off)
+	}
+	return s.codeWord(off)
+}
+
+// blockAt 依 mode 取一段位元組：0 是資料段，非 0 是程式碼段（常數）。
+//
+// 搞錯的症狀是「比較常數字串時永遠不相等」——因為在資料段的那個位址上
+// 讀到的是別的東西，而那不會報錯。
+func (s *State) blockAt(mode uint8, addr, n uint16) []byte {
+	mem := s.Data
+	if mode != 0 {
+		mem = s.Code
+	}
+	out := make([]byte, n)
+	for i := uint16(0); i < n; i++ {
+		if int(addr)+int(i) < len(mem) {
+			out[i] = mem[addr+i]
+		}
+	}
+	return out
+}
+
+// stringAt 取一個 UCSD 字串：第一個位元組是長度，後面才是字元。
+func (s *State) stringAt(mode uint8, addr uint16) []byte {
+	mem := s.Data
+	if mode != 0 {
+		mem = s.Code
+	}
+	if int(addr) >= len(mem) {
+		return nil
+	}
+	return s.blockAt(mode, addr+1, uint16(mem[addr]))
+}
+
+// cmpBytes 是無號的字典序比較：−1、0、1。
+// 前面都相同時比長度——`repe cmpsb` 之後那句 `cmp al, ah` 做的就是這件事。
+func cmpBytes(a, b []byte) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		switch {
+		case a[i] < b[i]:
+			return -1
+		case a[i] > b[i]:
+			return 1
+		}
+	}
+	switch {
+	case len(a) < len(b):
+		return -1
+	case len(a) > len(b):
+		return 1
+	}
+	return 0
+}
+
+// byteResult 把比較結果換成 0／1。op 用 EQBYT 那一族的編號。
+func byteResult(op uint8, c int) uint16 {
+	var ok bool
+	switch op {
+	case 0xb9: // EQBYT
+		ok = c == 0
+	case 0xba: // LEBYT
+		ok = c <= 0
+	case 0xbb: // GEBYT
+		ok = c >= 0
+	}
+	if ok {
+		return 1
+	}
+	return 0
+}
+
+// strOp 把字串比較的 opcode 對到位元組比較的同義字，共用 byteResult。
+func strOp(op uint8) uint8 {
+	switch op {
+	case 0xe8: // EQSTR
+		return 0xb9
+	case 0xe9: // LESTR
+		return 0xba
+	}
+	return 0xbb // GESTR
 }
 
 // TOS0 讀堆疊上第 n 個 word（0 是 TOS），不動堆疊。

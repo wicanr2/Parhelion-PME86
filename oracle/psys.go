@@ -37,6 +37,11 @@ const (
 
 	// DispatchBytes 是 dispatch 表的長度：256 項，每項一個 word。
 	DispatchBytes = 512
+
+	// ErrorEntry 是直譯器的執行期錯誤共同入口（映像偏移）。
+	// 每一支發錯誤的常式都是 `mov bp, 錯誤碼` 之後跳到這裡，
+	// 所以停在這裡的時候 bp 就是錯誤碼。
+	ErrorEntry = 0x020f
 )
 
 // dispatchSite 是分派那一跳的機器碼：`2E FF 25` ＝ `jmp word ptr cs:[di]`。
@@ -51,10 +56,25 @@ type System struct {
 	M *dosgolem.Machine
 	D *dosgolem.DOS
 
-	img     []byte // 磁碟上那份 SYSTEM.PME.86
-	base    uint32 // 直譯器映像在記憶體裡的實體位址
-	seg     uint16
-	targets map[uint16]bool // dispatch 表裡出現過的常式位址
+	img      []byte // 磁碟上那份 SYSTEM.PME.86
+	base     uint32 // 直譯器映像在記憶體裡的實體位址
+	seg      uint16
+	targets  map[uint16]bool // dispatch 表裡出現過的常式位址
+	errBreak int             // 執行期錯誤入口的中斷點
+}
+
+// RuntimeFault 是原版自己跑進了執行期錯誤。
+//
+// **這與「我們對不上」是兩件事。** 拿一台已經出錯的機器當對照，
+// 之後每一條都會對不上，而症狀看起來像我們的實作有問題。
+type RuntimeFault struct {
+	Code uint16 // 直譯器放在 bp 裡的錯誤碼
+	Seg  uint16 // 出錯時在哪一段的哪裡
+	IPC  uint16
+}
+
+func (e *RuntimeFault) Error() string {
+	return fmt.Sprintf("oracle: 原版在 %04X:%04X 發了執行期錯誤 %d", e.Seg, e.IPC, e.Code)
 }
 
 // Boot 載入 PSYSTEM.COM 並掛好 DOS 服務層。**還沒開始跑**——要呼叫 Run。
@@ -133,6 +153,12 @@ func (s *System) LocatePME(pmePath string) (uint32, error) {
 	for op := 0; op < 256; op++ {
 		s.targets[s.M.Read16(base+uint32(op)*2)] = true
 	}
+	// 原版跑進執行期錯誤時要**當場知道**。不設這個中斷點的話它會繼續跑，
+	// 而我們會拿一台已經出錯的機器當對照——對不上的地方看起來像我們的問題。
+	if s.errBreak != 0 {
+		s.M.ClearBreak(s.errBreak)
+	}
+	s.errBreak = s.M.BreakAt(s.seg, ErrorEntry)
 	return base, nil
 }
 
@@ -311,20 +337,36 @@ func (s *System) Trace(want int, budget uint64) ([]PCode, error) {
 		return nil, fmt.Errorf("oracle: 還沒定位 PME，先呼叫 LocatePME")
 	}
 	out := make([]PCode, 0, want)
+	// 判準：剛執行完的那一條是分派那一跳（`2E FF 25`），而且落點是 dispatch 目標。
+	// 只看落點會多算——有些常式做完事直接跳進另一支常式的入口。
+	//
+	// `Insn()` 回的是剛執行完那一條的起點，所以這個條件在 RunUntil 的
+	// 檢查時機（每一條之前、跳過第一條）剛好成立。
+	atDispatch := func(m *dosgolem.Machine) bool {
+		cs, ip := m.Insn()
+		if cs != s.seg || !s.atDispatchSite(cs, ip) {
+			return false
+		}
+		return m.CPU.Seg[dosgolem.CS] == s.seg && s.targets[m.CPU.IP]
+	}
+
 	limit := s.M.Steps + budget
 	for len(out) < want && s.M.Steps < limit && !s.D.Exited {
-		// 記下「即將執行的那一條」，跑完再看它是不是分派那一跳。
-		fromSeg, fromIP := s.M.CPU.Seg[dosgolem.CS], s.M.CPU.IP
-		if err := s.M.Step(); err != nil {
+		why, err := s.M.RunUntil(atDispatch, limit-s.M.Steps)
+		if err != nil {
 			return out, err
 		}
-		if fromSeg != s.seg || !s.atDispatchSite(fromSeg, fromIP) {
-			continue
+		switch why {
+		case dosgolem.StopBreakpoint:
+			return out, &RuntimeFault{
+				Code: s.M.CPU.R[dosgolem.BP],
+				Seg:  s.M.CPU.Seg[dosgolem.DS],
+				IPC:  s.M.CPU.R[dosgolem.SI] - 1,
+			}
+		case dosgolem.StopBudget:
+			return out, nil
 		}
 		c := s.M.CPU
-		if c.Seg[dosgolem.CS] != s.seg || !s.targets[c.IP] {
-			continue
-		}
 		ds, si, sp := c.Seg[dosgolem.DS], c.R[dosgolem.SI], c.R[dosgolem.SP]
 		out = append(out, PCode{
 			Seg: ds, IPC: si - 1,

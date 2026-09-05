@@ -4,12 +4,22 @@ package oracle
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/wicanr2/Parhelion-PME86/internal/pcode"
 	"github.com/wicanr2/Parhelion-PME86/internal/pmachine"
 	"github.com/wicanr2/dosgolem"
 )
+
+func firstErr(errs ...error) error {
+	for _, e := range errs {
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
 
 // Capture 把原版此刻的 p-machine 狀態抄成一份可以自己跑的 State。
 //
@@ -43,6 +53,7 @@ func (s *System) Capture() (*pmachine.State, error) {
 		ProcDict:  s.M.Read16(uint32(dataSeg)*16 + 0x36),
 		Proc:      s.M.Read16(uint32(dataSeg)*16 + 0x32),
 		ERec:      s.M.Read16(uint32(dataSeg)*16 + 0x3e),
+		Flipped:   s.M.Read16(uint32(dataSeg)*16+0x44) != 1,
 		Env:       &liveEnv{s},
 	}, nil
 }
@@ -193,6 +204,24 @@ type ParityResult struct {
 	Ops     map[uint8]int // 走過哪些 opcode、各幾次
 	Diverge *Divergence   // 第一個分歧；nil 表示走完都一致
 	Err     error         // 我們這邊停下來的原因（通常是還沒實作的 opcode）
+
+	// Resyncs 是「讓原版自己走、我們重抄狀態」的次數，Skipped 是那幾條各是什麼。
+	//
+	// **這些條沒有被驗證過。** 分母要看 Steps，不是 Steps+Resyncs。
+	Resyncs int
+	Skipped map[uint8]int
+}
+
+// hostOwned 回報這個錯誤是不是「本來就該由宿主做的事」。
+//
+// 只有兩種：段 1 的內嵌原生程序，以及段還沒載入。前者是直譯器自己的機器碼，
+// 後者要作業系統去磁碟讀——**兩件都不是 p-machine 的語意**。
+//
+// p-code 指令沒實作**不算**。那種也重抄的話，「還沒做」會看起來像「做完了」，
+// 而對拍就失去意義了。
+func hostOwned(err error) bool {
+	var ic *pmachine.IntrinsicCall
+	return errors.As(err, &ic) || errors.Is(err, pmachine.ErrNotResident)
 }
 
 // Parity 從原版此刻的狀態展開，兩邊各走 n 條 p-code，逐條比對。
@@ -206,7 +235,7 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	res := &ParityResult{Ops: map[uint8]int{}}
+	res := &ParityResult{Ops: map[uint8]int{}, Skipped: map[uint8]int{}}
 
 	for i := 0; i < n; i++ {
 		at, want := ours.IPC, uint8(0)
@@ -216,8 +245,25 @@ func (s *System) Parity(n int, budget uint64) (*ParityResult, error) {
 
 		op, err := ours.Step()
 		if err != nil {
-			res.Err = err
-			return res, nil
+			if !hostOwned(err) {
+				res.Err = err
+				return res, nil
+			}
+			// 宿主自己該做的事：讓原版走完那一條，再從它的狀態重抄一份。
+			// 這一條**沒有被驗證**，所以不進 Steps。
+			if rows, terr := s.Trace(1, budget); terr != nil || len(rows) == 0 {
+				res.Err = firstErr(terr, fmt.Errorf("oracle: 原版沒有走過那一條"))
+				return res, nil
+			}
+			next, cerr := s.Capture()
+			if cerr != nil {
+				res.Err = cerr
+				return res, nil
+			}
+			ours = next
+			res.Resyncs++
+			res.Skipped[op]++
+			continue
 		}
 		if op != want {
 			return nil, fmt.Errorf("oracle: 取指令自己就不一致（%04Xh 該是 %02X，取到 %02X）", at, want, op)

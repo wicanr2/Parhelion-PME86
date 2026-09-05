@@ -47,6 +47,13 @@ func main() {
 	}
 
 	fmt.Printf("兩邊一致地走了 %d 條 p-code\n", res.Steps)
+	if res.Resyncs > 0 {
+		fmt.Printf("另有 %d 條交給原版自己走（宿主的工作，**沒有驗證**）：", res.Resyncs)
+		for op, n := range res.Skipped {
+			fmt.Printf(" %02X %s×%d", op, pcode.Mnemonic(op), n)
+		}
+		fmt.Println()
+	}
 	if res.Diverge != nil {
 		fmt.Println("分歧：", res.Diverge)
 	}

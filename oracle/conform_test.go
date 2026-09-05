@@ -37,7 +37,7 @@ const (
 	// 下限釘住的是**進度不能倒退**。上限走不完不是失敗——那表示碰到還沒
 	// 實作的指令，而那是下一輪的工作，不是這一輪的錯。
 	parityWant  = 50_000
-	parityFloor = 300
+	parityFloor = 8_000
 )
 
 func TestExecutedCodeMatchesWhatTheReaderParses(t *testing.T) {
@@ -168,7 +168,15 @@ func TestParityAgainstTheOriginal(t *testing.T) {
 	if res.Steps < parityFloor {
 		t.Fatalf("只走了 %d 條就停下來（%v）——比之前少，是不是退步了？", res.Steps, res.Err)
 	}
-	t.Logf("%d 條 p-code 逐條一致，用到 %d 種 opcode", res.Steps, len(res.Ops))
+	// 交給原版自己走的那幾條**沒有被驗證**，所以只能是宿主本來就該做的事。
+	// 別的也放行的話，「還沒做」會看起來像「做完了」。
+	for op := range res.Skipped {
+		if !((op >= 0x70 && op <= 0x77) || (op >= 0x93 && op <= 0x95)) {
+			t.Errorf("opcode %02X 被跳過了，但它不是跨段呼叫", op)
+		}
+	}
+	t.Logf("%d 條 p-code 逐條一致，用到 %d 種 opcode；另有 %d 條交給原版自己走",
+		res.Steps, len(res.Ops), res.Resyncs)
 	if res.Err != nil {
 		t.Logf("停下來的原因：%v", res.Err)
 	}
