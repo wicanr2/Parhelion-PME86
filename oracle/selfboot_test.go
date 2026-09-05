@@ -191,3 +191,45 @@ func TestSelfBootInitialStateDiff(t *testing.T) {
 // initialDiffCeiling 是「還沒重建出來的 bootstrap 動作」還剩幾段。
 // **只准往下**：補一項就把它調低，才看得出進度。
 const initialDiffCeiling = 540
+
+// bootstrap 在資料段低位址處留下的那一塊到底是什麼——答案是
+// **直譯器自己的初始資料**：`SYSTEM.PME.86` 檔案開頭那一段被原封不動
+// 搬進資料段的同一個偏移。
+//
+// 檔案裡那一段之後會被 dispatch 表蓋掉（載入器把 `0x1D56` 起的 512 個
+// 位元組搬到映像偏移 0），所以它在程式碼段裡看不到——只在資料段裡活著。
+func TestInterpreterDataComesFromItsOwnHeader(t *testing.T) {
+	img, err := os.ReadFile(os.Getenv("PARHELION_PME"))
+	if err != nil {
+		t.Skip("讀不到 PARHELION_PME：", err)
+	}
+	s := bootToPME(t)
+	if _, err := s.Trace(1, traceBudget); err != nil {
+		t.Fatal(err)
+	}
+
+	// 只看檔案裡**非零**的那些 word——零的那些是留給執行期狀態的空格，
+	// bootstrap 會填進 IPC、MP、E_Rec 這些活的值。
+	same, nonzero := 0, 0
+	var diff []string
+	for off := 0; off < 0x200; off += 2 {
+		want := uint16(img[off]) | uint16(img[off+1])<<8
+		if want == 0 {
+			continue
+		}
+		nonzero++
+		if got := s.DataWord(uint16(off)); want == got {
+			same++
+		} else if len(diff) < 12 {
+			diff = append(diff, fmt.Sprintf("%03X 檔案 %04X 記憶體 %04X", off, want, got))
+		}
+	}
+	for _, d := range diff {
+		t.Log("  不同：", d)
+	}
+	t.Logf("檔案開頭那 512 個位元組裡，非零的 %d 個 word 有 %d 個原封不動搬進資料段",
+		nonzero, same)
+	if same != nonzero {
+		t.Fatalf("有 %d 個沒對上，這個結論站不住", nonzero-same)
+	}
+}
