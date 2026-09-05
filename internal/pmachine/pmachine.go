@@ -45,6 +45,14 @@ type State struct {
 	Proc uint16
 	ERec uint16
 
+	// TIB 是目前 task 的 Task Information Block（直譯器的 `ss:3Ch`）。
+	// `LPR` 讀它之前要先把執行狀態同步進去。
+	TIB uint16
+
+	// ProcHigh 是 `ss:0E6h`，同步進 TIB 時與 MSPROC 併成一個 word。
+	// 我們不用它，但少寫一個位元組會讓讀 TIB 的 p-code 拿到不同的值。
+	ProcHigh uint8
+
 	// Flipped 表示目前這一段的 byte sex 與主機相反（直譯器的 `ss:44h` 不是 1）。
 	// `LDC`、`MOV`、`XJP` 取多字資料時要逐 word 交換位元組。
 	Flipped bool
@@ -513,6 +521,131 @@ func (s *State) Step() (uint8, error) {
 			s.Store(dst+2*i, s.wordFrom(mode, src+2*i))
 		}
 
+	case 0xbd: // SWAP @0x0807：對調堆疊頂兩個 word
+		a, b := s.pop(), s.pop()
+		s.push(a)
+		s.push(b)
+
+	case 0x97: // CPF @0x1498：呼叫形式參數指的程序
+		proc := s.pop()
+		erec := s.pop()
+		if s.Env == nil {
+			return op, &Fault{at, "沒有 Environment，形式程序呼叫做不了"}
+		}
+		target, err := s.Env.ByERec(erec)
+		if err != nil {
+			return op, err
+		}
+		static := s.pop()
+		old := s.ERec
+		s.enter(target)
+		if err := s.call(proc, static); err != nil {
+			return op, err
+		}
+		s.Store(s.Local-8+6, old)
+
+	// 字串與陣列參數。@0x1509 解的是**兩個 word 的描述符**：
+	// 第一個是 E_Rec（0 表示就在資料段），第二個是段內偏移。
+	case 0xac: // CSP @0x1595：複製字串參數
+		max := uint16(s.fetch())
+		src, off, err := s.strParam(s.pop())
+		if err != nil {
+			return op, err
+		}
+		dst := s.pop()
+		n := uint16(src[off])
+		if n > max {
+			return op, &Fault{at, fmt.Sprintf("字串長度 %d 超過目的的 %d", n, max)}
+		}
+		for i := uint16(0); i <= n; i++ { // 含長度位元組
+			s.setByteAt(dst+i, src[off+i])
+		}
+	case 0xab: // CAP @0x1565：複製陣列參數
+		n := s.big()
+		src, off, err := s.strParam(s.pop())
+		if err != nil {
+			return op, err
+		}
+		dst := s.pop()
+		for i := uint16(0); i < n*2; i++ {
+			s.setByteAt(dst+i, src[off+i])
+		}
+	case 0xeb: // ASTR @0x0b6b：字串指派
+		mode, max := s.fetch(), uint16(s.fetch())
+		src := s.pop()
+		dst := s.pop()
+		mem := s.Data
+		if mode != 0 {
+			mem = s.Code
+		}
+		n := uint16(mem[src])
+		if n > max {
+			return op, &Fault{at, fmt.Sprintf("字串長度 %d 超過目的的 %d", n, max)}
+		}
+		for i := uint16(0); i <= n; i++ {
+			s.setByteAt(dst+i, mem[src+i])
+		}
+	case 0xec: // CSTR @0x0b9f：檢查字串長度，堆疊不動
+		v := s.TOS0(0)
+		addr := s.TOS0(1)
+		if v>>8 == 0 && v&0xff != 0 && v&0xff > uint16(s.byteAt(addr)) {
+			return op, &Fault{at, fmt.Sprintf("字串索引 %d 超過長度 %d", v&0xff, s.byteAt(addr))}
+		}
+
+	case 0x9d: // LPR @0x16af：讀處理器暫存器
+		n := int16(s.pop())
+		s.syncTIB()
+		if n >= 0 {
+			s.push(s.Load(s.TIB + 2*uint16(n)))
+			break
+		}
+		// 負的暫存器號直接索引直譯器的狀態區：−1 是 TIB 指標（ss:3Ch）、
+		// −2 是 E_Vec（ss:3Ah）、−3 是 ready queue（ss:38h）。
+		// 原版寫成 `ss:[di+3Eh]`，di 是 2n 之後 wrap 過的值。
+		s.push(s.Load(uint16(0x3e + 2*n)))
+
+	// 集合。堆疊上的表示法是 **N 個 word ＋ 頂端的 N**，word k 在 sp+2k
+	// （由 INN @0x0dc6 的 `sp += 2k; pop` 讀出來）。
+	case 0xbc: // SRS @0x0d4b：由上下界造一個集合
+		hi, lo := int16(s.pop()), int16(s.pop())
+		if lo < 0 || hi > 0xFEF {
+			return op, &Fault{at, fmt.Sprintf("子範圍集合的界線 %d..%d 超出 0..4079", lo, hi)}
+		}
+		if lo > hi {
+			s.pushSet(nil) // 空集合
+			break
+		}
+		w := make([]uint16, hi/16+1)
+		for i := lo; i <= hi; i++ {
+			w[i/16] |= 1 << uint(i%16)
+		}
+		s.pushSet(w)
+
+	case 0xc7: // ADJ @0x0cac：把集合調成 UB 個 word，**並且拿掉長度**
+		n := int(s.fetch())
+		w := s.popSet()
+		out := make([]uint16, n)
+		copy(out, w)
+		for i := n - 1; i >= 0; i-- {
+			s.push(out[i])
+		}
+
+	case 0xda: // INN @0x0dc6：TOS 是集合，底下是要找的整數
+		w := s.popSet()
+		v := int16(s.pop())
+		in := v >= 0 && int(v)/16 < len(w) && w[v/16]&(1<<uint(v%16)) != 0
+		s.push(b2w(in))
+
+	case 0xdb, 0xdc, 0xdd: // UNI @0x0e24／INT @0x0e8c／DIF @0x0ec2
+		b := s.popSet()
+		a := s.popSet()
+		s.pushSet(setOp(op, a, b))
+
+	case 0xb6, 0xb7, 0xb8: // EQPWR @0x0f3e／LEPWR／GEPWR
+		b := s.popSet()
+		a := s.popSet()
+		s.push(b2w(setCompare(op, a, b)))
+
 	case 0xd0: // LDM @0x09b8：推 UB 個 word，位址低的那個留在 TOS
 		n := uint16(s.fetch())
 		addr := s.pop()
@@ -762,6 +895,132 @@ func (s *State) wordFrom(mode uint8, off uint16) uint16 {
 		return s.Load(off)
 	}
 	return s.codeWord(off)
+}
+
+// strParam 解一個字串／陣列參數描述符（助手 @0x1509）。
+//
+// 描述符是兩個 word：E_Rec 與段內偏移。E_Rec 為 0 表示東西就在資料段，
+// 否則要先把那一段解出來——常數字串放在程式碼段裡。
+func (s *State) strParam(desc uint16) ([]byte, uint16, error) {
+	erec := s.Load(desc)
+	off := s.Load(desc + 2)
+	if erec == 0 {
+		return s.Data, off, nil
+	}
+	if s.Env == nil {
+		return nil, 0, &Fault{s.IPC, "沒有 Environment，跨段的字串參數解不了"}
+	}
+	t, err := s.Env.ByERec(erec)
+	if err != nil {
+		return nil, 0, err
+	}
+	return t.Code, off, nil
+}
+
+// syncTIB 把執行狀態寫進目前 task 的 TIB（助手 @0x15f5）。
+//
+// `LPR`／`SPR` 讀寫的是 TIB 裡的值，而那些值只有在這一刻才是最新的——
+// 不同步的話讀到的是上一次切換 task 時留下的舊狀態。
+func (s *State) syncTIB() {
+	if s.TIB == 0 {
+		return
+	}
+	s.Store(s.TIB+0x08, s.SP)
+	s.Store(s.TIB+0x0a, s.Local-8)
+	s.Store(s.TIB+0x0e, s.IPC)
+	s.Store(s.TIB+0x10, s.ERec)
+	s.Store(s.TIB+0x12, s.Proc&0xff|uint16(s.ProcHigh)<<8)
+}
+
+// popSet 取一個堆疊上的集合：頂端是 word 數，底下依序是 word 0..N−1。
+func (s *State) popSet() []uint16 {
+	n := s.pop()
+	w := make([]uint16, n)
+	for i := range w {
+		w[i] = s.pop()
+	}
+	return w
+}
+
+// pushSet 推一個集合。word 由高索引先推——堆疊往下長，所以 word 0 會落在最上面。
+func (s *State) pushSet(w []uint16) {
+	for i := len(w) - 1; i >= 0; i-- {
+		s.push(w[i])
+	}
+	s.push(uint16(len(w)))
+}
+
+// setOp 是聯集、交集、差集。長度分別是 max、min、左邊那個——
+// 長度取錯不會報錯，只會讓後面的成員判斷在邊界上出錯。
+func setOp(op uint8, a, b []uint16) []uint16 {
+	at := func(w []uint16, i int) uint16 {
+		if i < len(w) {
+			return w[i]
+		}
+		return 0
+	}
+	n := len(a)
+	switch op {
+	case 0xdb: // UNI
+		if len(b) > n {
+			n = len(b)
+		}
+	case 0xdc: // INT
+		if len(b) < n {
+			n = len(b)
+		}
+	}
+	out := make([]uint16, n)
+	for i := range out {
+		switch op {
+		case 0xdb:
+			out[i] = at(a, i) | at(b, i)
+		case 0xdc:
+			out[i] = at(a, i) & at(b, i)
+		default: // DIF
+			out[i] = at(a, i) &^ at(b, i)
+		}
+	}
+	return out
+}
+
+// setCompare 是相等、包含於、包含。長度不同的集合要當成後面補零來比。
+func setCompare(op uint8, a, b []uint16) bool {
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	at := func(w []uint16, i int) uint16 {
+		if i < len(w) {
+			return w[i]
+		}
+		return 0
+	}
+	for i := 0; i < n; i++ {
+		x, y := at(a, i), at(b, i)
+		switch op {
+		case 0xb6: // EQPWR
+			if x != y {
+				return false
+			}
+		case 0xb7: // LEPWR：a ⊆ b
+			if x&^y != 0 {
+				return false
+			}
+		default: // GEPWR：a ⊇ b
+			if y&^x != 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func b2w(v bool) uint16 {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // blockAt 依 mode 取一段位元組：0 是資料段，非 0 是程式碼段（常數）。

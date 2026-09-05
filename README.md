@@ -50,7 +50,7 @@
 - [spec 01：codefile 靜態結構](docs/30-remake/specs/01-codefile.md) — `CONFORMED`。
 - [spec 02：p-machine 執行核心](docs/30-remake/specs/02-pmachine-core.md) — `CONFORMED`。
 
-**M0 做完。M1 的對拍迴路成立：8,665 條 p-code 與原版逐條一致，0 個分歧。
+**M0 做完。M1：210 個指令做完 190，8,782 條 p-code 與原版逐條一致，0 個分歧。
 跨段呼叫已完成並驗過**——45 次換段逐一與原版對過，對拍實際走過一次換段。
 
 ```
@@ -85,11 +85,11 @@ dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
 
 ```
 $ tools/go.sh run -tags oracle ./cmd/parity -pme .../SYSTEM.PME.86
-兩邊一致地走了 8665 條 p-code
+兩邊一致地走了 8782 條 p-code
 另有 147 條交給原版自己走（宿主的工作，**沒有驗證**）： 70 SCXG1×147
-停下來的原因： pmachine: 0E7Fh 的 opcode 9D LPR 還沒實作
+停下來的原因： pmachine: 1581h 的 opcode DE SIGNAL 還沒實作
 
-用到 75 種 opcode：…
+用到 86 種 opcode：…
 ```
 
 **沒有分歧**才是重點。交給原版走的那 147 條全部是段 1 的內嵌原生程序——

@@ -37,7 +37,7 @@ const (
 	// 下限釘住的是**進度不能倒退**。上限走不完不是失敗——那表示碰到還沒
 	// 實作的指令，而那是下一輪的工作，不是這一輪的錯。
 	parityWant  = 50_000
-	parityFloor = 8_000
+	parityFloor = 8_700
 )
 
 func TestExecutedCodeMatchesWhatTheReaderParses(t *testing.T) {

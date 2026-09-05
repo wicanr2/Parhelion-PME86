@@ -54,6 +54,8 @@ func (s *System) Capture() (*pmachine.State, error) {
 		Proc:      s.M.Read16(uint32(dataSeg)*16 + 0x32),
 		ERec:      s.M.Read16(uint32(dataSeg)*16 + 0x3e),
 		Flipped:   s.M.Read16(uint32(dataSeg)*16+0x44) != 1,
+		TIB:       s.M.Read16(uint32(dataSeg)*16 + 0x3c),
+		ProcHigh:  s.M.Read8(uint32(dataSeg)*16 + 0xe6),
 		Env:       &liveEnv{s},
 	}, nil
 }
