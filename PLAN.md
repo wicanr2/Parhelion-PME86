@@ -492,6 +492,22 @@ Go 宿主底下沒有 DOS——與 `NAT` 同一種界線，不是還沒做。
 
 細節與待解清單在 [spec 03](docs/30-remake/specs/03-boot.md)。
 
+### R13 收工：知識庫補齊，五個開放項目結案
+
+新增兩篇：[段 1 的內嵌原生程序](docs/10-interpreter/native-intrinsics.md)、
+[多工與換 task](docs/10-interpreter/tasking.md)。
+改寫一篇：[`SYSTEM.PME.86` 開頭那 512 個位元組](docs/20-formats/pme86-header.md)
+——原本的推論是「給載入器看的」，實測給了更好的答案。
+補進兩篇：狀態那篇加 `ss:0E6h` 一格三用與「區域變數不是空的」，
+定址那篇加「返回其實有三條路」。
+
+姊妹 repo 補上 `EXIT` 的拆框機制（那是通則，不是 8086 特有的），
+並把 `EXITIC` 為什麼存在、為什麼擺在字典項前面接起來。
+
+**M2 到此結案。** 一片 `.VOL` 進去，p-System 自己開到命令列、按鍵有反應、
+Filer 列得出目錄；整段開機 226,623 條 p-code 與原版逐條相同；
+對拍覆蓋 205／211 種 opcode。
+
 ## 勘誤：被這一輪推翻的舊斷言
 
 都在姊妹 repo [`ucsd-pascal-notes`](https://github.com/wicanr2/ucsd-pascal-notes)
