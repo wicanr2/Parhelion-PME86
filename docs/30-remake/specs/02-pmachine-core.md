@@ -1,5 +1,7 @@
 # spec 02：p-machine 執行核心
 
+[English](02-pmachine-core.en.md) ｜ [日本語](02-pmachine-core.ja.md) ｜ **繁體中文**
+
 | | |
 |---|---|
 | 狀態 | `CONFORMED`（涵蓋範圍內的 56 個 opcode）|
@@ -130,7 +132,7 @@ Pascal 的 `MOD` 不是 C 的 `%`。
 
 8.5 `RPU`(@0x1102) 把它拆回來：`SP = MP − 2`，依序取走 `[MP−2]`、`MSSTAT`、
 `MSDYN`（成為新的 MP）、`MSIPC`、`MSENV`、`MSPROC`，最後 `SP += 參數位元組數`。
-`MSCW` 的 `E_Rec` 與目前的不同時是跨段返回，還沒實作。
+`MSCW` 的 `E_Rec` 與目前的不同時是跨段返回，見 8.11。
 
 ## 8bis. 跨段呼叫
 

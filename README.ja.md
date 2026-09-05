@@ -53,7 +53,7 @@ RAM ディスクへコピーしているところ。打てば動く：
 **unit 128 は DOS ホストのファイルシステムゲートウェイ**で、p-System から
 下の DOS のファイルを読み書きするためのもの。Go ホストの下に DOS はないので
 答えは常に「何もない」——`NAT` と同じ種類の境界であって、やり残しではない。
-やり取りの形は実測して [spec 03](docs/30-remake/specs/03-boot.md) に書いてある。
+やり取りの形は実測して [spec 03](docs/30-remake/specs/03-boot.ja.md) に書いてある。
 
 データセグメント下位のブロックの出所も判明した：**あれはインタプリタ自身の
 初期化データ**で、`SYSTEM.PME.86` の先頭 512 バイトがそのまま同じオフセットへ
@@ -175,33 +175,33 @@ dosgolem は汎用の機能だけを提供する。**実際に動く側はそれ
 
 実装はこれらを読んでから書いた。逆ではない。
 
-1. [命令フェッチとディスパッチ](docs/10-interpreter/dispatch-and-threading.md)
+1. [命令フェッチとディスパッチ](docs/10-interpreter/dispatch-and-threading.ja.md)
    — メインループのないインタプリタ。変位なしの間接ジャンプの向こうにある
    dispatch テーブルをどう見つけたか。
-2. [インタプリタの状態](docs/10-interpreter/machine-state.md)
+2. [インタプリタの状態](docs/10-interpreter/machine-state.ja.md)
    — どの p-machine レジスタが 8086 レジスタに常駐する価値があるか、残りはどこに置くか。
-3. [アドレッシングと活性化レコード](docs/10-interpreter/addressing.md)
+3. [アドレッシングと活性化レコード](docs/10-interpreter/addressing.ja.md)
    — ワードの世界からバイトの世界への層、変数番号が 1 から始まる理由、
    そして復帰に 3 つの道があること。
-4. [セグメントの切り替え](docs/10-interpreter/segment-switching.md)
+4. [セグメントの切り替え](docs/10-interpreter/segment-switching.ja.md)
    — `E_Rec`、`SIB`、コードセグメントのヘッダ、手続き辞書。
-5. [セグメント 1 の組み込みネイティブ手続き](docs/10-interpreter/native-intrinsics.md)
+5. [セグメント 1 の組み込みネイティブ手続き](docs/10-interpreter/native-intrinsics.ja.md)
    — p-code と機械語の境目。その線はインタプリタ自身が引いている。
-6. [マルチタスクとタスク切り替え](docs/10-interpreter/tasking.md)
+6. [マルチタスクとタスク切り替え](docs/10-interpreter/tasking.ja.md)
    — セマフォ、ready queue、TIB、そして dispatch テーブル 256 個を
    同じアドレスで埋めるという手口。
-7. [256 マスの対照表](docs/10-interpreter/opcode-map.md)
+7. [256 マスの対照表](docs/10-interpreter/opcode-map.ja.md)
    — マスごとに：IV.0 のニーモニック、ルーチンのオフセット、命令数。
 
-フォーマット：[`.VOL` ディスクイメージ](docs/20-formats/vol-image.md)、
-[`SYSTEM.PME.86` の先頭 512 バイト](docs/20-formats/pme86-header.md)
+フォーマット：[`.VOL` ディスクイメージ](docs/20-formats/vol-image.ja.md)、
+[`SYSTEM.PME.86` の先頭 512 バイト](docs/20-formats/pme86-header.ja.md)
 ——あれはヘッダではなく、インタプリタ自身の初期化データ。
 
-作り直し：[実現可能性の評価](docs/30-remake/feasibility.md)、
-[spec ゲート](docs/30-remake/spec-workflow.md)、
-[spec 01 codefile](docs/30-remake/specs/01-codefile.md)（`CONFORMED`）、
-[spec 02 実行コア](docs/30-remake/specs/02-pmachine-core.md)（`CONFORMED`）、
-[spec 03 自力起動](docs/30-remake/specs/03-boot.md)（`DRAFT`）。
+作り直し：[実現可能性の評価](docs/30-remake/feasibility.ja.md)、
+[spec ゲート](docs/30-remake/spec-workflow.ja.md)、
+[spec 01 codefile](docs/30-remake/specs/01-codefile.ja.md)（`CONFORMED`）、
+[spec 02 実行コア](docs/30-remake/specs/02-pmachine-core.ja.md)（`CONFORMED`）、
+[spec 03 自力起動](docs/30-remake/specs/03-boot.ja.md)（`CONFORMED`）。
 
 ラウンドごとの進捗、覆った主張、未解決項目の一覧は [`PLAN.md`](PLAN.md) に。
 

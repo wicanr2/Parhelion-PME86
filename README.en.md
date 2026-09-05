@@ -54,7 +54,7 @@ itself). Booting needs none of them.
 and write files on the DOS underneath. A Go host has no DOS beneath it, so the
 answer is always "nothing there" — the same kind of boundary as `NAT`, not
 something left undone. The shape of the exchange is measured and written down in
-[spec 03](docs/30-remake/specs/03-boot.md).
+[spec 03](docs/30-remake/specs/03-boot.en.md).
 
 One piece is still unexplained: the low end of the data segment. Its origin is
 now known — **it is the interpreter's own initialised data**, the first 512
@@ -184,35 +184,35 @@ tests.
 
 The implementation was written from these, not the other way round.
 
-1. [Fetch and dispatch](docs/10-interpreter/dispatch-and-threading.md)
+1. [Fetch and dispatch](docs/10-interpreter/dispatch-and-threading.en.md)
    — an interpreter with no main loop, and how the dispatch table was found
    behind an indirect jump with no displacement.
-2. [Interpreter state](docs/10-interpreter/machine-state.md)
+2. [Interpreter state](docs/10-interpreter/machine-state.en.md)
    — which p-machine registers earn a permanent 8086 register, and where the
    rest live.
-3. [Addressing and activation records](docs/10-interpreter/addressing.md)
+3. [Addressing and activation records](docs/10-interpreter/addressing.en.md)
    — the layer between the word world and the byte world, why variable numbers
    start at 1, and the three ways a return can go.
-4. [Segment switching](docs/10-interpreter/segment-switching.md)
+4. [Segment switching](docs/10-interpreter/segment-switching.en.md)
    — `E_Rec`, `SIB`, the code segment header, the procedure dictionary.
-5. [Segment 1's embedded native procedures](docs/10-interpreter/native-intrinsics.md)
+5. [Segment 1's embedded native procedures](docs/10-interpreter/native-intrinsics.en.md)
    — where p-code ends and machine code begins. The interpreter draws that line
    itself.
-6. [Concurrency and task switching](docs/10-interpreter/tasking.md)
+6. [Concurrency and task switching](docs/10-interpreter/tasking.en.md)
    — semaphores, the ready queue, the TIB, and the trick of filling the entire
    dispatch table with one address.
-7. [The 256-entry map](docs/10-interpreter/opcode-map.md)
+7. [The 256-entry map](docs/10-interpreter/opcode-map.en.md)
    — cell by cell: IV.0 mnemonic, routine offset, instruction count.
 
-Formats: [`.VOL` disk images](docs/20-formats/vol-image.md),
-[the first 512 bytes of `SYSTEM.PME.86`](docs/20-formats/pme86-header.md)
+Formats: [`.VOL` disk images](docs/20-formats/vol-image.en.md),
+[the first 512 bytes of `SYSTEM.PME.86`](docs/20-formats/pme86-header.en.md)
 — which are not a header at all, but the interpreter's own initialised data.
 
-The remake: [feasibility](docs/30-remake/feasibility.md),
-[the spec gate](docs/30-remake/spec-workflow.md),
-[spec 01 codefile](docs/30-remake/specs/01-codefile.md) (`CONFORMED`),
-[spec 02 execution core](docs/30-remake/specs/02-pmachine-core.md) (`CONFORMED`),
-[spec 03 self-boot](docs/30-remake/specs/03-boot.md) (`DRAFT`).
+The remake: [feasibility](docs/30-remake/feasibility.en.md),
+[the spec gate](docs/30-remake/spec-workflow.en.md),
+[spec 01 codefile](docs/30-remake/specs/01-codefile.en.md) (`CONFORMED`),
+[spec 02 execution core](docs/30-remake/specs/02-pmachine-core.en.md) (`CONFORMED`),
+[spec 03 self-boot](docs/30-remake/specs/03-boot.en.md) (`CONFORMED`).
 
 Round-by-round progress, retracted claims and the open-item list are in
 [`PLAN.md`](PLAN.md).

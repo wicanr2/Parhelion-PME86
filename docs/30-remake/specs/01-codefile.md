@@ -1,5 +1,7 @@
 # spec 01：codefile 與 code segment 的靜態結構
 
+[English](01-codefile.en.md) ｜ [日本語](01-codefile.ja.md) ｜ **繁體中文**
+
 | | |
 |---|---|
 | 狀態 | `CONFORMED` |

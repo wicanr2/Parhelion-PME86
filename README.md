@@ -184,7 +184,7 @@ dispatch 目標、怎麼讀 p-code 軌跡），dosgolem 只提供通用能力。
 [spec 閘門](docs/30-remake/spec-workflow.md)、
 [spec 01 codefile](docs/30-remake/specs/01-codefile.md)（`CONFORMED`）、
 [spec 02 執行核心](docs/30-remake/specs/02-pmachine-core.md)（`CONFORMED`）、
-[spec 03 自己開機](docs/30-remake/specs/03-boot.md)（`DRAFT`）。
+[spec 03 自己開機](docs/30-remake/specs/03-boot.md)（`CONFORMED`）。
 
 分輪進度、被推翻的舊斷言、開放項目清單都在 [`PLAN.md`](PLAN.md)。
 
